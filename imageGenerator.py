@@ -1,12 +1,14 @@
-import os #test
+import os
 import io
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
 from rembg import remove, new_session
 
 # === Configuration ===
-desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-input_folder = os.path.join(desktop, "Image Generator")
+base_folder = r"C:\Users\LocalAdmin\Desktop\automation\imageGeneratorAssets"
+input_folder = base_folder
+finished_folder = os.path.join(base_folder, "Finished")
+os.makedirs(finished_folder, exist_ok=True)
 image_extensions = ('.jpg', '.jpeg', '.png')
 
 # === Get Latest Image ===
@@ -40,14 +42,12 @@ def pick_text_color(rgb):
 def create_gradient(size, color_top, color_bottom):
     gradient = Image.new('RGB', size, color=0)
     draw = ImageDraw.Draw(gradient)
-
     for y in range(size[1]):
         ratio = y / size[1]
         r = int(color_top[0] * (1 - ratio) + color_bottom[0] * ratio)
         g = int(color_top[1] * (1 - ratio) + color_bottom[1] * ratio)
         b = int(color_top[2] * (1 - ratio) + color_bottom[2] * ratio)
         draw.line([(0, y), (size[0], y)], fill=(r, g, b))
-
     return gradient
 
 # === Resize Large Images ===
@@ -61,17 +61,14 @@ def resize_if_needed(img, max_width=1024):
 def add_shadow(image, offset=(5,5), background_color=0, shadow_color=0, border=20, iterations=10):
     total_width = image.width + abs(offset[0]) + 2 * border
     total_height = image.height + abs(offset[1]) + 2 * border
-
     shadow_image = Image.new('RGBA', (total_width, total_height), background_color)
     shadow = Image.new('RGBA', image.size, color=shadow_color)
     alpha = image.split()[3]
     shadow.putalpha(alpha)
-
     shadow_position = (border + max(offset[0], 0), border + max(offset[1], 0))
     shadow_image.paste(shadow, shadow_position, shadow)
     for _ in range(iterations):
         shadow_image = shadow_image.filter(ImageFilter.GaussianBlur(2))
-
     image_position = (border - min(offset[0], 0), border - min(offset[1], 0))
     shadow_image.paste(image, image_position, image)
     return shadow_image
@@ -79,7 +76,6 @@ def add_shadow(image, offset=(5,5), background_color=0, shadow_color=0, border=2
 # === Compose Final Image with Subject and Text ===
 def compose_image(cutout, bg_color_top, bg_color_bottom, text_lines, text_position="below"):
     width, height = cutout.size
-
     alpha = np.array(cutout.split()[-1])
     rows_with_data = np.where(np.max(alpha, axis=1) > 0)[0]
     subject_top = rows_with_data[0] if len(rows_with_data) > 0 else 0
@@ -122,7 +118,7 @@ def compose_image(cutout, bg_color_top, bg_color_bottom, text_lines, text_positi
         draw.text((x, y), line, font=font, fill=text_color)
         y += font.getbbox(line)[3] - font.getbbox(line)[1] + 10
 
-    return result.convert("RGB")  # <-- flatten before save
+    return result.convert("RGB")
 
 # === Background Removal + Gradient ===
 def remove_background_and_add_gradient(input_path, output_path, text_input, text_position):
@@ -203,9 +199,6 @@ def main():
     if text_position not in ["above", "below"]:
         print("Invalid input. Defaulting to 'below'.")
         text_position = "below"
-
-    finished_folder = os.path.join(input_folder, "Finished")
-    os.makedirs(finished_folder, exist_ok=True)
 
     output_name = f"{base} Transparent Background.png"
     output_path = os.path.join(finished_folder, output_name)
