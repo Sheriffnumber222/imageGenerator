@@ -86,35 +86,45 @@ def compose_image(cutout, bg_color_top, bg_color_bottom, text_lines, text_positi
     font_size = 60
     while font_size > 10:
         font = ImageFont.truetype(font_path, font_size)
-        if font.getlength(longest_line) <= 0.95 * width:
+        if font.getlength(longest_line) <= 0.9 * width:
             break
         font_size -= 1
 
-    text_height_total = sum([font.getbbox(line)[3] - font.getbbox(line)[1] + 10 for line in text_lines]) + 30
+    text_height_total = sum([font.getbbox(line)[3] - font.getbbox(line)[1] + 10 for line in text_lines]) + 20
+
+    # --- Padding values for balanced centering ---
+    side_padding = 50
+    top_padding = 50
+    bottom_padding = 50
 
     if text_position == "above":
-        overlap = 45
-        text_y_start = 10
-        cutout_y = text_height_total - overlap
-        total_height = subject_bottom + text_height_total - overlap + 30
-    else:
-        cutout_y = 0
-        text_y_start = subject_bottom + 30
-        total_height = subject_bottom + text_height_total + 30
+        text_y_start = top_padding
+        cutout_y = top_padding + text_height_total + 20
+        total_height = cutout_y + height + bottom_padding
+    else:  # "below"
+        cutout_y = top_padding
+        text_y_start = cutout_y + height + 20
+        total_height = text_y_start + text_height_total + bottom_padding
 
-    gradient = create_gradient((width, total_height), bg_color_top, bg_color_bottom)
-    result = Image.new("RGBA", (width, total_height))
+    total_width = width + side_padding * 2
+
+    # Create gradient background with balanced padding
+    gradient = create_gradient((total_width, total_height), bg_color_top, bg_color_bottom)
+    result = Image.new("RGBA", (total_width, total_height))
     result.paste(gradient, (0, 0))
 
+    # Center cutout horizontally
     cutout_with_shadow = add_shadow(cutout)
-    result.paste(cutout_with_shadow, (0, cutout_y), cutout_with_shadow)
+    cutout_x = (total_width - cutout_with_shadow.width) // 2
+    result.paste(cutout_with_shadow, (cutout_x, cutout_y), cutout_with_shadow)
 
+    # Draw text centered
     draw = ImageDraw.Draw(result)
     text_color = pick_text_color(bg_color_bottom if text_position == "below" else bg_color_top)
     y = text_y_start
     for line in text_lines:
         text_width = font.getlength(line)
-        x = (width - text_width) // 2
+        x = (total_width - text_width) // 2
         draw.text((x, y), line, font=font, fill=text_color)
         y += font.getbbox(line)[3] - font.getbbox(line)[1] + 10
 
