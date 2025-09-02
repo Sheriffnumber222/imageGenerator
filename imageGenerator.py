@@ -150,9 +150,9 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, text
         "1": ("#2c3e50", "#bdc3c7"),
         "2": ("#0f2027", "#2c5364"),
         "3": ("#1a1a1a", "#272727"),
-        "4": ("#4d217a", "#9b59b6"),
-        "5": ("#1b1f3b", "#4d217a"),
-        "6": ("#7f4fa3", "#4d217a")
+        "4": ("#E7B95F", "#FFF4D6"),
+        "5": ("#E7B95F", "#4d217a"),
+        "6": ("#E7B95F", "#1A1A1A")
     }
 
     while True:
@@ -160,9 +160,9 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, text
         print("1 = Soft Steel (#2c3e50 → #bdc3c7)")
         print("2 = Midnight Fade (#0f2027 → #2c5364)")
         print("3 = Subtle Charcoal (#1a1a1a → #272727)")
-        print("4 = Brand to Soft Purple (#4d217a → #9b59b6)")
-        print("5 = Navy to Brand (#1b1f3b → #4d217a)")
-        print("6 = Brand Tint to Brand (#7f4fa3 → #4d217a)")
+        print("4 = Brand to Cream (#E7B95F → #FFF4D6)")
+        print("5 = Brand to Old Brand (#E7B95F → #7f4fa3)")
+        print("6 = Brand Tint to Brand (#E7B95F → #1A1A1A)")
         print("custom = Enter your own two hex colors")
         print("Leave blank to auto-detect from image background")
 
