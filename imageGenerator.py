@@ -41,12 +41,18 @@ SHADOW_BLUR       = 2
 SHADOW_ITERATIONS = 8
 SHADOW_ALPHA      = 160  # 0..255
 
+# ---- Text legibility (optional stroke/outline) ----
+TEXT_STROKE_WIDTH = 0  # [CHANGE] set to 1–2 to enable a safety outline around text
+
 # Platform presets
 PLATFORM_SPECS = {
     "facebook":  {"size": (1200, 1500), "desc": "Facebook feed 4:5 (1200x1500)"},
     "instagram": {"size": (1080, 1350), "desc": "Instagram feed 4:5 (1080x1350)"},
     "email":     {"size": (1200,  600), "desc": "Email hero 2:1 (1200x600)"}
 }
+
+# [CHANGE] Cache rembg session once (performance)
+RMBG_SESSION = new_session("isnet-general-use")
 
 # === Utility ===
 def get_latest_image(folder):
@@ -68,6 +74,9 @@ def get_dominant_edge_color(img, edge=20):
 def pick_text_color(rgb):
     brightness = 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]
     return (0, 0, 0) if brightness > 128 else (255, 255, 255)
+
+def inverse_color(rgb):
+    return (255 - rgb[0], 255 - rgb[1], 255 - rgb[2])
 
 def create_gradient(size, color_top, color_bottom):
     w, h = size
@@ -135,12 +144,16 @@ def compose_image(
     bg_color_bottom,
     top_lines,
     bottom_lines,
-    canvas_size=(1080, 1350),
+    canvas_size=None,  # [CHANGE] require explicit size; fallback removed
     side_padding_pct=SIDE_PADDING_PCT,
     top_padding_pct=TOP_PADDING_PCT,
     bottom_padding_pct=BOTTOM_PADDING_PCT,
     prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE
 ):
+    # [CHANGE] explicit size guard
+    if canvas_size is None or len(canvas_size) != 2:
+        raise ValueError("compose_image requires an explicit canvas_size=(width, height)")
+
     cw, ch = canvas_size
     side_pad   = int(cw * side_padding_pct)
     top_pad    = int(ch * top_padding_pct)
@@ -164,13 +177,12 @@ def compose_image(
 
     # --- Search for the best font size ---
     start_fs = max(int(cw * 0.11), 24)  # slightly larger start to allow auto-downsize
-    best = None  # (score, fs, top_h, bottom_h, gap_px, line_spacing)
+    best = None  # (score, fs)
+
     for fs in range(start_fs, 11, -2):
-        # Allow top/bottom multipliers
         font_top = load_font(int(fs * TOP_FONT_MULT))
         font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
 
-        # Width checks (target band 60–90%)
         def longest_ratio(lines, font_obj):
             if not lines:
                 return 0.0
@@ -181,98 +193,151 @@ def compose_image(
         top_ratio = longest_ratio(top_lines, font_top)
         bottom_ratio = longest_ratio(bottom_lines, font_bottom)
 
-        # If any line exceeds max width, skip this fs
+        # Hard reject overs
         if top_ratio > TEXT_WIDTH_MAX_RATIO + 0.02 or bottom_ratio > TEXT_WIDTH_MAX_RATIO + 0.02:
             continue
 
-        # Text block heights at this size
         line_spacing = base_line_spacing
         top_h = compute_block_height(top_lines, font_top, line_spacing)
         bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-        # Try width-first product fit
+        gap_top = base_gap if top_h > 0 else 0
+        gap_bottom = base_gap if bottom_h > 0 else 0
+
         target_w = cw - 2*side_pad
         w_limit_inner = max(1, target_w - shadow_extra_w)
 
-        # Available inner height for product (after text + gaps)
-        gap_top = base_gap if top_h > 0 else 0
-        gap_bottom = base_gap if bottom_h > 0 else 0
         avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
 
-        # If crowded, squeeze gaps down to MIN_GAP_PX
+        # [CHANGE] Squeeze only existing gaps; never create new ones
         if avail_h_inner < 0:
-            squeeze = min(base_gap - MIN_GAP_PX, (0 - avail_h_inner) // 2)
-            if squeeze > 0:
-                gap_top = max(MIN_GAP_PX, gap_top - squeeze)
-                gap_bottom = max(MIN_GAP_PX, gap_bottom - squeeze)
-                avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
+            need = -avail_h_inner
+            squeezable_top = max(0, gap_top - MIN_GAP_PX)
+            squeezable_bottom = max(0, gap_bottom - MIN_GAP_PX)
+            total_squeezable = squeezable_top + squeezable_bottom
+            if total_squeezable > 0:
+                take_top = int(need * (squeezable_top / total_squeezable))
+                take_bottom = min(need - take_top, squeezable_bottom)
+                gap_top -= take_top
+                gap_bottom -= take_bottom
+            avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
 
-        # Compute candidate scales
+        # Candidate scales
         scale_by_w = w_limit_inner / cutout.width
         scale_by_h = avail_h_inner / cutout.height if cutout.height > 0 else 0
 
-        # Guard
         if scale_by_w <= 0 and scale_by_h <= 0:
             continue
 
-        # Choose scale
-        if prefer_full_width and scale_by_w > 0 and (cutout.height * scale_by_w + shadow_extra_h) <= (safe_h - (top_h + gap_top + bottom_h + gap_bottom)):
+        # [CHANGE] Width-first allowed only if product remains prominent enough
+        def can_fit_full_width():
+            if not (prefer_full_width and scale_by_w > 0):
+                return False
+            product_total_h = cutout.height * scale_by_w + shadow_extra_h
+            if product_total_h > (safe_h - (top_h + gap_top + bottom_h + gap_bottom)):
+                return False
+            frac = product_total_h / max(1, safe_h)
+            return frac >= PRODUCT_MIN_FRAC_OF_SAFE
+
+        if can_fit_full_width():
             scale = scale_by_w
         else:
-            scale = min(scale_by_w if scale_by_w > 0 else float('inf'),
-                        scale_by_h if scale_by_h > 0 else float('inf'))
-            if not np.isfinite(scale) or scale <= 0:
+            # otherwise use the limiting dimension
+            scale_candidates = []
+            if scale_by_w > 0: scale_candidates.append(scale_by_w)
+            if scale_by_h > 0: scale_candidates.append(scale_by_h)
+            if not scale_candidates:
                 continue
+            scale = min(scale_candidates)
 
-        # Product prominence check
+        if not np.isfinite(scale) or scale <= 0:
+            continue
+
         product_total_h = cutout.height * scale + shadow_extra_h
-        product_frac = product_total_h / safe_h
-        if product_frac < PRODUCT_MIN_FRAC_OF_SAFE:
-            # Penalize rather than discard; sometimes text must dominate
-            prominence_penalty = (PRODUCT_MIN_FRAC_OF_SAFE - product_frac)
-        else:
-            prominence_penalty = 0.0
+        product_frac = product_total_h / max(1, safe_h)
+        prominence_penalty = max(0.0, PRODUCT_MIN_FRAC_OF_SAFE - product_frac)
 
-        # Width fitness score (1 when within band; soft penalty outside)
         def band_score(ratio):
             if ratio == 0:
                 return 1.0
             if ratio < TEXT_WIDTH_MIN_RATIO:
-                # too narrow: penalty grows as it gets smaller
                 return max(0.0, 1.0 - (TEXT_WIDTH_MIN_RATIO - ratio) * 2.0)
             if ratio > TEXT_WIDTH_MAX_RATIO:
                 return max(0.0, 1.0 - (ratio - TEXT_WIDTH_MAX_RATIO) * 4.0)
             return 1.0
 
-        width_score = min(band_score(top_ratio), band_score(bottom_ratio))  # conservative
-
-        # Overall score: prioritize larger product scale, then font size, then width fitness
+        width_score = min(band_score(top_ratio), band_score(bottom_ratio))
         fs_norm = (fs - 12) / (start_fs - 12 + 1e-6)
-        score = (scale * 1.0) + (fs_norm * 0.25) + (width_score * 0.15) - (prominence_penalty * 0.8)
+        # [CHANGE] Slightly stronger penalty on under-prominent product
+        score = (scale * 1.0) + (fs_norm * 0.25) + (width_score * 0.15) - (prominence_penalty * 1.0)
 
         if (best is None) or (score > best[0]):
-            best = (score, fs, top_h, bottom_h, gap_top, gap_bottom, line_spacing, scale)
+            best = (score, fs)
 
-    # Fallback if no size worked
+    # Fallback if no size worked at all
     if best is None:
         fs = 12
-        font_top = load_font(int(fs * TOP_FONT_MULT))
-        font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
-        top_h = compute_block_height(top_lines, font_top, base_line_spacing)
-        bottom_h = compute_block_height(bottom_lines, font_bottom, base_line_spacing)
-        gap_top = base_gap if top_h > 0 else 0
-        gap_bottom = base_gap if bottom_h > 0 else 0
-        target_w = cw - 2*side_pad
-        w_limit_inner = max(1, target_w - shadow_extra_w)
-        avail_h_inner = max(1, safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h)
-        scale = min(w_limit_inner / cutout.width, avail_h_inner / cutout.height)
-        if not np.isfinite(scale) or scale <= 0:
-            scale = 0.5
-        line_spacing = base_line_spacing
     else:
-        _, fs, top_h, bottom_h, gap_top, gap_bottom, line_spacing, scale = best
-        font_top = load_font(int(fs * TOP_FONT_MULT))
-        font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
+        _, fs = best
+
+    # [CHANGE] Final safety: shrink-to-fit if any line exceeds width
+    while fs > 12:
+        f_top = load_font(int(fs * TOP_FONT_MULT))
+        f_bot = load_font(int(fs * BOTTOM_FONT_MULT))
+        too_wide = any(f_top.getlength(ln or " ") > max_text_width for ln in top_lines) or \
+                   any(f_bot.getlength(ln or " ") > max_text_width for ln in bottom_lines)
+        if not too_wide:
+            break
+        fs -= 1
+
+    font_top = load_font(int(fs * TOP_FONT_MULT))
+    font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
+
+    # [CHANGE] Recompute layout with final fs and choose final scale again
+    line_spacing = base_line_spacing
+    top_h = compute_block_height(top_lines, font_top, line_spacing)
+    bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
+    gap_top = base_gap if top_h > 0 else 0
+    gap_bottom = base_gap if bottom_h > 0 else 0
+
+    target_w = cw - 2*side_pad
+    w_limit_inner = max(1, target_w - shadow_extra_w)
+    avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
+
+    if avail_h_inner < 0:
+        need = -avail_h_inner
+        squeezable_top = max(0, gap_top - MIN_GAP_PX)
+        squeezable_bottom = max(0, gap_bottom - MIN_GAP_PX)
+        total_squeezable = squeezable_top + squeezable_bottom
+        if total_squeezable > 0:
+            take_top = int(need * (squeezable_top / total_squeezable))
+            take_bottom = min(need - take_top, squeezable_bottom)
+            gap_top -= take_top
+            gap_bottom -= take_bottom
+        avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
+
+    scale_by_w = w_limit_inner / cutout.width
+    scale_by_h = avail_h_inner / cutout.height if cutout.height > 0 else 0
+
+    def final_can_full_width():
+        if not (prefer_full_width and scale_by_w > 0):
+            return False
+        product_total_h = cutout.height * scale_by_w + shadow_extra_h
+        if product_total_h > (safe_h - (top_h + gap_top + bottom_h + gap_bottom)):
+            return False
+        frac = product_total_h / max(1, safe_h)
+        return frac >= PRODUCT_MIN_FRAC_OF_SAFE
+
+    if final_can_full_width():
+        scale = scale_by_w
+    else:
+        scale_candidates = []
+        if scale_by_w > 0: scale_candidates.append(scale_by_w)
+        if scale_by_h > 0: scale_candidates.append(scale_by_h)
+        scale = min(scale_candidates) if scale_candidates else 0.5
+
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 0.5
 
     # Resize + shadow
     new_w = max(1, int(cutout.width * scale))
@@ -290,11 +355,14 @@ def compose_image(
     # Top text
     if top_h > 0:
         text_color_top = pick_text_color(bg_color_top)
+        stroke_col_top = inverse_color(text_color_top)
         ty = y
         for line in top_lines:
             t = line if line else " "
             tx = int((cw - font_top.getlength(t)) // 2)
-            draw.text((tx, ty), t, font=font_top, fill=text_color_top)
+            # [CHANGE] optional stroke for legibility
+            draw.text((tx, ty), t, font=font_top, fill=text_color_top,
+                      stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
             bb = font_top.getbbox(t)
             ty += (bb[3] - bb[1]) + line_spacing
         y = ty + (gap_top if gap_top else 0)
@@ -308,10 +376,12 @@ def compose_image(
     if bottom_h > 0:
         y += (gap_bottom if gap_bottom else 0)
         text_color_bottom = pick_text_color(bg_color_bottom)
+        stroke_col_bottom = inverse_color(text_color_bottom)
         for line in bottom_lines:
             t = line if line else " "
             tx = int((cw - font_bottom.getlength(t)) // 2)
-            draw.text((tx, y), t, font=font_bottom, fill=text_color_bottom)
+            draw.text((tx, y), t, font=font_bottom, fill=text_color_bottom,
+                      stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_bottom)
             bb = font_bottom.getbbox(t)
             y += (bb[3] - bb[1]) + line_spacing
 
@@ -339,8 +409,8 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, canv
     original_img = Image.open(input_path).convert("RGBA")
     resized_img = resize_if_needed(original_img)
 
-    session = new_session("isnet-general-use")
-    output_data = remove(input_data, session=session)
+    # [CHANGE] reuse cached rembg session
+    output_data = remove(input_data, session=RMBG_SESSION)
 
     cutout = Image.open(io.BytesIO(output_data)).convert("RGBA")
     cutout = resize_if_needed(cutout)
