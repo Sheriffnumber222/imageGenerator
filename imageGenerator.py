@@ -27,7 +27,7 @@ ORPHAN_UPSCALE_STEP  = 1.04    # per-step multiplier when nudging font size up
 ORPHAN_UPSCALE_STEPS = 6       # at most ~25% total boost (1.04^6 ≈ 1.27), but other guards still apply
 
 # Vertical rhythm
-LINE_SPACING_PCT   = 0.012     # line spacing vs canvas height
+LINE_SPACING_PCT   = 0.024     # line spacing vs canvas height
 GAP_PCT            = 0.02      # base gap between text blocks and product
 MIN_GAP_PX         = 8         # never go below this when auto-shrinking gaps
 
@@ -68,7 +68,7 @@ SINGLE_SIDE_ANCHOR_TOP    = 0.62  # only top text → product a bit lower
 SINGLE_SIDE_ANCHOR_BOTTOM = 0.38  # only bottom text → product a bit higher
 
 # ---- [NEW] Both‑sides product anchor (optical center) ----
-PRODUCT_CENTER_RATIO_BOTH = 0.57  # product visual center at ~57% of safe band
+PRODUCT_CENTER_RATIO_BOTH = 0.45  # product visual center at ~57% of safe band
 
 # Platform presets
 PLATFORM_SPECS = {
