@@ -20,19 +20,35 @@ BOTTOM_PADDING_PCT = 0.08
 TEXT_WIDTH_MIN_RATIO = 0.60    # aim for longest line ≥ 60% of available width
 TEXT_WIDTH_MAX_RATIO = 0.90    # and ≤ 90% of available width
 
+# [NEW] Orphan mitigation (gentle boost when a block’s longest line is very short)
+ORPHAN_MIN_RATIO     = 0.40    # if longest line ≤ 40%, we try to nudge it up a bit
+ORPHAN_TARGET_RATIO  = 0.50    # aim to reach ~50% if possible (without breaking other rules)
+ORPHAN_UPSCALE_STEP  = 1.04    # per-step multiplier when nudging font size up
+ORPHAN_UPSCALE_STEPS = 6       # at most ~25% total boost (1.04^6 ≈ 1.27), but other guards still apply
+
 # Vertical rhythm
-LINE_SPACING_PCT   = 0.024     # line spacing vs canvas height
+LINE_SPACING_PCT   = 0.012     # line spacing vs canvas height
 GAP_PCT            = 0.02      # base gap between text blocks and product
 MIN_GAP_PX         = 8         # never go below this when auto-shrinking gaps
-OPTICAL_BIAS_PCT   = -0.03     # up/down shift of the whole stack inside the safe band (−0.03 = lift up 3%)
+
+# [NEW] Quiet zone (buffer around the product when adjacent to text)
+QUIET_ZONE_FRAC_OF_PRODUCT = 0.065  # 6.5% of product height as min buffer (per side with text)
+
+# [CHANGE] Optical bias is now expressed as explicit product-center anchors
+# Keep this for single-sided layout bias (still useful)
+OPTICAL_BIAS_PCT   = -0.03
 
 # Product size protection
 PRODUCT_MIN_FRAC_OF_SAFE = 0.35   # product should occupy at least this fraction of safe vertical space
 PREFER_FULL_WIDTH_WHEN_POSSIBLE = True
 
-# Optional: make top lines slightly larger than bottom lines
+# Optional: make top lines slightly larger than bottom lines (base multipliers)
 TOP_FONT_MULT    = 1.00
 BOTTOM_FONT_MULT = 1.00
+
+# ---- Hierarchy enforcement (when both top and bottom exist) ----
+BOTTOM_HIERARCHY_SCALE   = 0.92  # [NEW] bottom font ≈ 90–92% of top
+BOTTOM_MAX_SAFE_FRAC     = 0.25  # [NEW] bottom block ≤ 25% of safe band
 
 # ---- Shadow controls ----
 SHADOW_OFFSET     = (6, 6)
@@ -47,11 +63,12 @@ TEXT_STROKE_WIDTH = 0  # set to 1–2 to enable a safety outline around text
 # ---- Centering behavior ----
 CENTER_TEXT_BLOCKS = True  # center text blocks within their own sections
 
-# ---- [NEW] Single‑sided layout anchors (0.5 = exact center) ----
-# When ONLY top text exists, product center will be placed at ~62% down in the safe band.
-# When ONLY bottom text exists, product center will be placed at ~38% down in the safe band.
-SINGLE_SIDE_ANCHOR_TOP = 0.62
-SINGLE_SIDE_ANCHOR_BOTTOM = 0.38
+# ---- Single‑sided anchors (0.5 = exact center) ----
+SINGLE_SIDE_ANCHOR_TOP    = 0.62  # only top text → product a bit lower
+SINGLE_SIDE_ANCHOR_BOTTOM = 0.38  # only bottom text → product a bit higher
+
+# ---- [NEW] Both‑sides product anchor (optical center) ----
+PRODUCT_CENTER_RATIO_BOTH = 0.57  # product visual center at ~57% of safe band
 
 # Platform presets
 PLATFORM_SPECS = {
@@ -159,7 +176,6 @@ def compose_image(
     bottom_padding_pct=BOTTOM_PADDING_PCT,
     prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE,
     center_text_blocks=CENTER_TEXT_BLOCKS,
-    # [NEW] allow per-call override of single-sided anchors
     single_side_anchor_top=SINGLE_SIDE_ANCHOR_TOP,
     single_side_anchor_bottom=SINGLE_SIDE_ANCHOR_BOTTOM,
 ):
@@ -171,8 +187,7 @@ def compose_image(
     top_pad    = int(ch * top_padding_pct)
     bottom_pad = int(ch * bottom_padding_pct)
     base_line_spacing = int(ch * LINE_SPACING_PCT)
-    base_gap = int(ch * GAP_PCT)
-    base_gap = max(base_gap, MIN_GAP_PX)
+    base_gap = max(int(ch * GAP_PCT), MIN_GAP_PX)
 
     gradient = create_gradient((cw, ch), bg_color_top, bg_color_bottom)
     result = Image.new("RGBA", (cw, ch))
@@ -187,83 +202,116 @@ def compose_image(
     shadow_extra_w = _probe_s.width - 1
     shadow_extra_h = _probe_s.height - 1
 
-    # --- Search for the best font size ---
+    has_top = bool(top_lines)
+    has_bottom = bool(bottom_lines)
+    both_blocks = has_top and has_bottom
+
+    # --- Search for the best base font size (fs controls overall scale) ---
     start_fs = max(int(cw * 0.11), 24)
-    best = None  # (score, fs)
+    best = None  # (score, fs, eff_bottom_fs)
+
+    def longest_ratio(lines, font_obj):
+        if not lines:
+            return 0.0
+        widths = [font_obj.getlength(ln if ln else " ") for ln in lines]
+        longest = max(widths) if widths else 0
+        return 0 if max_text_width <= 0 else (longest / max_text_width)
 
     for fs in range(start_fs, 11, -2):
-        font_top = load_font(int(fs * TOP_FONT_MULT))
-        font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
+        # Top font at fs
+        top_fs = int(fs * TOP_FONT_MULT)
+        font_top = load_font(top_fs)
 
-        def longest_ratio(lines, font_obj):
-            if not lines:
-                return 0.0
-            widths = [font_obj.getlength(ln if ln else " ") for ln in lines]
-            longest = max(widths) if widths else 0
-            return 0 if max_text_width <= 0 else (longest / max_text_width)
-
-        top_ratio = longest_ratio(top_lines, font_top)
-        bottom_ratio = longest_ratio(bottom_lines, font_bottom)
-
-        # Hard reject overs
-        if top_ratio > TEXT_WIDTH_MAX_RATIO + 0.02 or bottom_ratio > TEXT_WIDTH_MAX_RATIO + 0.02:
-            continue
+        # Bottom hierarchy: smaller when both blocks exist
+        bottom_rel = BOTTOM_HIERARCHY_SCALE if both_blocks else 1.0
+        bottom_fs = max(10, int(fs * BOTTOM_FONT_MULT * bottom_rel))
+        font_bottom = load_font(bottom_fs)
 
         line_spacing = base_line_spacing
         top_h = compute_block_height(top_lines, font_top, line_spacing)
         bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-        gap_top = base_gap if top_h > 0 else 0
-        gap_bottom = base_gap if bottom_h > 0 else 0
+        # [NEW] Enforce bottom height cap when both blocks exist
+        if both_blocks and bottom_h > int(BOTTOM_MAX_SAFE_FRAC * safe_h):
+            cap_px = int(BOTTOM_MAX_SAFE_FRAC * safe_h)
+            while bottom_h > cap_px and bottom_fs > 10:
+                bottom_fs = max(10, int(bottom_fs * 0.96))
+                font_bottom = load_font(bottom_fs)
+                bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
+
+        # Width ratios after bottom cap adjustment
+        top_ratio = longest_ratio(top_lines, font_top)
+        bottom_ratio = longest_ratio(bottom_lines, font_bottom)
+
+        # Hard reject if anything exceeds max width
+        if top_ratio > TEXT_WIDTH_MAX_RATIO + 0.02 or bottom_ratio > TEXT_WIDTH_MAX_RATIO + 0.02:
+            continue
+
+        # Base gaps if the block exists
+        gap_top = base_gap if has_top else 0
+        gap_bottom = base_gap if has_bottom else 0
 
         target_w = cw - 2*side_pad
         w_limit_inner = max(1, target_w - shadow_extra_w)
 
+        # First-pass available height (without quiet zones)
         avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
 
-        # Squeeze only existing gaps; never create new ones
-        if avail_h_inner < 0:
-            need = -avail_h_inner
-            squeezable_top = max(0, gap_top - MIN_GAP_PX)
-            squeezable_bottom = max(0, gap_bottom - MIN_GAP_PX)
-            total_squeezable = squeezable_top + squeezable_bottom
-            if total_squeezable > 0:
-                take_top = int(need * (squeezable_top / total_squeezable))
-                take_bottom = min(need - take_top, squeezable_bottom)
-                gap_top -= take_top
-                gap_bottom -= take_bottom
-            avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
-
-        # Candidate scales
+        # Candidate scales without quiet zones
         scale_by_w = w_limit_inner / cutout.width
         scale_by_h = avail_h_inner / cutout.height if cutout.height > 0 else 0
-
         if scale_by_w <= 0 and scale_by_h <= 0:
             continue
 
         # Width-first allowed only if product remains prominent enough
-        def can_fit_full_width():
+        def can_fit_full_width(g_top, g_bottom):
             if not (prefer_full_width and scale_by_w > 0):
                 return False
             product_total_h = cutout.height * scale_by_w + shadow_extra_h
-            if product_total_h > (safe_h - (top_h + gap_top + bottom_h + gap_bottom)):
+            if product_total_h > (safe_h - (top_h + g_top + bottom_h + g_bottom)):
                 return False
             frac = product_total_h / max(1, safe_h)
             return frac >= PRODUCT_MIN_FRAC_OF_SAFE
 
-        if can_fit_full_width():
+        # Initial scale choice (without quiet zones)
+        if can_fit_full_width(gap_top, gap_bottom):
             scale = scale_by_w
         else:
-            scale_candidates = []
-            if scale_by_w > 0: scale_candidates.append(scale_by_w)
-            if scale_by_h > 0: scale_candidates.append(scale_by_h)
-            if not scale_candidates:
+            cands = []
+            if scale_by_w > 0: cands.append(scale_by_w)
+            if scale_by_h > 0: cands.append(scale_by_h)
+            if not cands:
                 continue
-            scale = min(scale_candidates)
+            scale = min(cands)
 
         if not np.isfinite(scale) or scale <= 0:
             continue
 
+        # [NEW] Quiet zones depend on product height → refine gaps and scale
+        product_total_h = cutout.height * scale + shadow_extra_h
+        quiet_top = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_top else 0
+        quiet_bottom = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_bottom else 0
+
+        gap_top_eff = max(gap_top, quiet_top)
+        gap_bottom_eff = max(gap_bottom, quiet_bottom)
+
+        avail_h_inner2 = safe_h - (top_h + gap_top_eff + bottom_h + gap_bottom_eff) - shadow_extra_h
+        scale_by_h2 = avail_h_inner2 / cutout.height if cutout.height > 0 else 0
+
+        if can_fit_full_width(gap_top_eff, gap_bottom_eff):
+            scale = scale_by_w
+        else:
+            cands = []
+            if scale_by_w > 0: cands.append(scale_by_w)
+            if scale_by_h2 > 0: cands.append(scale_by_h2)
+            if not cands:
+                continue
+            scale = min(cands)
+
+        if not np.isfinite(scale) or scale <= 0:
+            continue
+
+        # Final product metrics for scoring
         product_total_h = cutout.height * scale + shadow_extra_h
         product_frac = product_total_h / max(1, safe_h)
         prominence_penalty = max(0.0, PRODUCT_MIN_FRAC_OF_SAFE - product_frac)
@@ -279,72 +327,153 @@ def compose_image(
 
         width_score = min(band_score(top_ratio), band_score(bottom_ratio))
         fs_norm = (fs - 12) / (start_fs - 12 + 1e-6)
-        score = (scale * 1.0) + (fs_norm * 0.25) + (width_score * 0.15) - (prominence_penalty * 1.0)
+
+        # Heavier penalty if width << target (protects against tiny orphan lines)
+        small_width_penalty = 0.0
+        if (has_top and top_ratio <= ORPHAN_MIN_RATIO) or (has_bottom and bottom_ratio <= ORPHAN_MIN_RATIO):
+            small_width_penalty = 0.1  # mild; we'll also do a micro-upscale later
+
+        score = (scale * 1.0) + (fs_norm * 0.25) + (width_score * 0.15) - (prominence_penalty * 1.0) - small_width_penalty
 
         if (best is None) or (score > best[0]):
-            best = (score, fs)
+            best = (score, fs, bottom_fs)
 
     # Fallback if no size worked at all
     if best is None:
         fs = 12
+        bottom_fs = max(10, int(fs * BOTTOM_FONT_MULT * (BOTTOM_HIERARCHY_SCALE if both_blocks else 1.0)))
     else:
-        _, fs = best
+        _, fs, bottom_fs = best
 
-    # Final safety: shrink-to-fit if any line exceeds width
-    while fs > 12:
-        f_top = load_font(int(fs * TOP_FONT_MULT))
-        f_bot = load_font(int(fs * BOTTOM_FONT_MULT))
-        too_wide = any(f_top.getlength(ln or " ") > max_text_width for ln in top_lines) or \
-                   any(f_bot.getlength(ln or " ") > max_text_width for ln in bottom_lines)
-        if not too_wide:
-            break
-        fs -= 1
+    # --- Final sizing + safety passes ---
+    # Base fonts
+    top_fs = int(fs * TOP_FONT_MULT)
+    font_top = load_font(top_fs)
 
-    font_top = load_font(int(fs * TOP_FONT_MULT))
-    font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
+    font_bottom = load_font(bottom_fs)
 
-    # Recompute layout with final fs and choose final scale again
+    # Final line spacing and block heights
     line_spacing = base_line_spacing
     top_h = compute_block_height(top_lines, font_top, line_spacing)
     bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
-    gap_top = base_gap if top_h > 0 else 0
-    gap_bottom = base_gap if bottom_h > 0 else 0
+
+    # Enforce bottom cap again at the very end (more accurate with final fs)
+    if both_blocks and bottom_h > int(BOTTOM_MAX_SAFE_FRAC * safe_h):
+        cap_px = int(BOTTOM_MAX_SAFE_FRAC * safe_h)
+        while bottom_h > cap_px and bottom_fs > 10:
+            bottom_fs = max(10, int(bottom_fs * 0.96))
+            font_bottom = load_font(bottom_fs)
+            bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
+
+    # Width safety: shrink to avoid overflow
+    def block_too_wide(lines, font_obj):
+        return any(font_obj.getlength(ln or " ") > max_text_width for ln in lines)
+
+    while top_fs > 12 and block_too_wide(top_lines, font_top):
+        top_fs -= 1
+        font_top = load_font(top_fs)
+        top_h = compute_block_height(top_lines, font_top, line_spacing)
+
+    while bottom_fs > 12 and block_too_wide(bottom_lines, font_bottom):
+        bottom_fs -= 1
+        font_bottom = load_font(bottom_fs)
+        bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
+
+    # [NEW] Orphan mitigation: gentle upscaling per block (without breaking constraints)
+    def longest_ratio_with(font_obj, lines):
+        if not lines:
+            return 0.0
+        widths = [font_obj.getlength(ln if ln else " ") for ln in lines]
+        longest = max(widths) if widths else 0
+        return longest / max_text_width if max_text_width > 0 else 0
+
+    # We will re-evaluate scale after this pass; only slight changes allowed.
+    if has_top:
+        tries = 0
+        while tries < ORPHAN_UPSCALE_STEPS:
+            tr = longest_ratio_with(font_top, top_lines)
+            if tr > ORPHAN_MIN_RATIO and tr >= ORPHAN_TARGET_RATIO:
+                break
+            # Try a tiny increase but never allow overflow beyond TEXT_WIDTH_MAX_RATIO
+            cand_fs = int(round(top_fs * ORPHAN_UPSCALE_STEP))
+            cand_font = load_font(cand_fs)
+            if longest_ratio_with(cand_font, top_lines) > (TEXT_WIDTH_MAX_RATIO + 0.01):
+                break
+            top_fs = cand_fs
+            font_top = cand_font
+            top_h = compute_block_height(top_lines, font_top, line_spacing)
+            tries += 1
+
+    if has_bottom:
+        tries = 0
+        while tries < ORPHAN_UPSCALE_STEPS:
+            br = longest_ratio_with(font_bottom, bottom_lines)
+            if br > ORPHAN_MIN_RATIO and br >= ORPHAN_TARGET_RATIO:
+                break
+            cand_fs = int(round(bottom_fs * ORPHAN_UPSCALE_STEP))
+            cand_font = load_font(cand_fs)
+            # Keep bottom smaller than top when both blocks exist
+            if both_blocks and cand_fs > int(top_fs * BOTTOM_HIERARCHY_SCALE):
+                break
+            if longest_ratio_with(cand_font, bottom_lines) > (TEXT_WIDTH_MAX_RATIO + 0.01):
+                break
+            bottom_fs = cand_fs
+            font_bottom = cand_font
+            bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
+            # Re-enforce 25% safe cap
+            if both_blocks and bottom_h > int(BOTTOM_MAX_SAFE_FRAC * safe_h):
+                break
+            tries += 1
+
+    # Final gaps (base + quiet zones later)
+    gap_top = base_gap if has_top else 0
+    gap_bottom = base_gap if has_bottom else 0
 
     target_w = cw - 2*side_pad
     w_limit_inner = max(1, target_w - shadow_extra_w)
+
+    # First-pass scale
     avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
-
-    if avail_h_inner < 0:
-        need = -avail_h_inner
-        squeezable_top = max(0, gap_top - MIN_GAP_PX)
-        squeezable_bottom = max(0, gap_bottom - MIN_GAP_PX)
-        total_squeezable = squeezable_top + squeezable_bottom
-        if total_squeezable > 0:
-            take_top = int(need * (squeezable_top / total_squeezable))
-            take_bottom = min(need - take_top, squeezable_bottom)
-            gap_top -= take_top
-            gap_bottom -= take_bottom
-        avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
-
     scale_by_w = w_limit_inner / cutout.width
     scale_by_h = avail_h_inner / cutout.height if cutout.height > 0 else 0
 
-    def final_can_full_width():
-        if not (prefer_full_width and scale_by_w > 0):
+    def can_fit_full_width(g_top, g_bottom, scale_w):
+        if not (prefer_full_width and scale_w > 0):
             return False
-        product_total_h = cutout.height * scale_by_w + shadow_extra_h
-        if product_total_h > (safe_h - (top_h + gap_top + bottom_h + gap_bottom)):
+        prod_h = cutout.height * scale_w + shadow_extra_h
+        if prod_h > (safe_h - (top_h + g_top + bottom_h + g_bottom)):
             return False
-        frac = product_total_h / max(1, safe_h)
+        frac = prod_h / max(1, safe_h)
         return frac >= PRODUCT_MIN_FRAC_OF_SAFE
 
-    if final_can_full_width():
+    if can_fit_full_width(gap_top, gap_bottom, scale_by_w):
         scale = scale_by_w
     else:
-        scale_candidates = []
-        if scale_by_w > 0: scale_candidates.append(scale_by_w)
-        if scale_by_h > 0: scale_candidates.append(scale_by_h)
-        scale = min(scale_candidates) if scale_candidates else 0.5
+        cands = []
+        if scale_by_w > 0: cands.append(scale_by_w)
+        if scale_by_h > 0: cands.append(scale_by_h)
+        scale = min(cands) if cands else 0.5
+
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 0.5
+
+    # Add quiet zones (refine gaps and scale once more)
+    product_total_h = cutout.height * scale + shadow_extra_h
+    quiet_top = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_top else 0
+    quiet_bottom = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_bottom else 0
+    gap_top_eff = max(gap_top, quiet_top)
+    gap_bottom_eff = max(gap_bottom, quiet_bottom)
+
+    avail_h_inner2 = safe_h - (top_h + gap_top_eff + bottom_h + gap_bottom_eff) - shadow_extra_h
+    scale_by_h2 = avail_h_inner2 / cutout.height if cutout.height > 0 else 0
+
+    if can_fit_full_width(gap_top_eff, gap_bottom_eff, scale_by_w):
+        scale = scale_by_w
+    else:
+        cands = []
+        if scale_by_w > 0: cands.append(scale_by_w)
+        if scale_by_h2 > 0: cands.append(scale_by_h2)
+        scale = min(cands) if cands else scale
 
     if not np.isfinite(scale) or scale <= 0:
         scale = 0.5
@@ -355,45 +484,46 @@ def compose_image(
     cutout_resized = cutout.resize((new_w, new_h), Image.LANCZOS)
     cutout_with_shadow = add_shadow(cutout_resized)
 
-    # --- Placement math ---
-    stack_h = top_h + gap_top + cutout_with_shadow.height + gap_bottom + bottom_h
-    bias_px = int(safe_h * OPTICAL_BIAS_PCT)
-    stack_top_y = top_pad + int((safe_h - stack_h) / 2) + bias_px
+    # --- Product position (anchors) ---
+    product_h_total = cutout_with_shadow.height
+    safe_top_y = top_pad
+    safe_bottom_y = ch - bottom_pad
 
-    # Default (both text blocks) product position derived from centered stack
-    product_y = stack_top_y + (top_h + (gap_top if top_h > 0 else 0))
-
-    # [NEW] Single‑sided rules: re-anchor product if only one text block exists
-    if top_h > 0 and bottom_h == 0:
-        # Top text only: place product center near lower third (anchor ~0.62)
-        centerY = top_pad + int(safe_h * float(single_side_anchor_top)) + bias_px
-        product_y = int(centerY - cutout_with_shadow.height / 2)
-
-        # Clamp so top text + gap fit and product stays above bottom pad
-        min_y = top_pad + top_h + (gap_top if gap_top else 0)
-        max_y = ch - bottom_pad - cutout_with_shadow.height
+    if both_blocks:
+        # [NEW] Optical vertical bias via anchor
+        centerY = safe_top_y + int(safe_h * PRODUCT_CENTER_RATIO_BOTH)
+        product_y = int(centerY - product_h_total / 2)
+        # Ensure room for text + quiet gaps
+        min_y = safe_top_y + top_h + gap_top_eff
+        max_y = safe_bottom_y - (bottom_h + gap_bottom_eff) - product_h_total
         product_y = max(min_y, min(product_y, max_y))
-
-    elif bottom_h > 0 and top_h == 0:
-        # Bottom text only: place product center near upper third (anchor ~0.38)
-        centerY = top_pad + int(safe_h * float(single_side_anchor_bottom)) + bias_px
-        product_y = int(centerY - cutout_with_shadow.height / 2)
-
-        # Clamp so product stays below top pad and bottom text + gap fit
-        min_y = top_pad
-        max_y = ch - bottom_pad - (bottom_h + (gap_bottom if gap_bottom else 0)) - cutout_with_shadow.height
+    elif has_top and not has_bottom:
+        centerY = safe_top_y + int(safe_h * float(single_side_anchor_top))
+        product_y = int(centerY - product_h_total / 2)
+        min_y = safe_top_y + top_h + gap_top_eff
+        max_y = safe_bottom_y - product_h_total
         product_y = max(min_y, min(product_y, max_y))
+    elif has_bottom and not has_top:
+        centerY = safe_top_y + int(safe_h * float(single_side_anchor_bottom))
+        product_y = int(centerY - product_h_total / 2)
+        min_y = safe_top_y
+        max_y = safe_bottom_y - (bottom_h + gap_bottom_eff) - product_h_total
+        product_y = max(min_y, min(product_y, max_y))
+    else:
+        # No text → simple center
+        centerY = safe_top_y + int(safe_h * 0.5)
+        product_y = int(centerY - product_h_total / 2)
 
     product_x = (cw - cutout_with_shadow.width) // 2
 
     draw = ImageDraw.Draw(result)
 
-    # ---- DRAW: Vertically center text blocks in their sections ----
+    # ---- DRAW: Vertically center text blocks in their sections (respect quiet gaps) ----
     if center_text_blocks:
         # TOP SECTION
-        if top_h > 0:
-            top_sec_top = top_pad
-            top_sec_bottom = product_y - (gap_top if gap_top else 0)
+        if has_top:
+            top_sec_top = safe_top_y
+            top_sec_bottom = product_y - gap_top_eff
             top_sec_avail = max(0, top_sec_bottom - top_sec_top)
             ty = top_sec_top + max(0, (top_sec_avail - top_h) // 2)
 
@@ -411,9 +541,9 @@ def compose_image(
         result.paste(cutout_with_shadow, (product_x, product_y), cutout_with_shadow)
 
         # BOTTOM SECTION
-        if bottom_h > 0:
-            bottom_start = product_y + cutout_with_shadow.height + (gap_bottom if gap_bottom else 0)
-            bottom_sec_bottom = ch - bottom_pad
+        if has_bottom:
+            bottom_start = product_y + product_h_total + gap_bottom_eff
+            bottom_sec_bottom = safe_bottom_y
             bottom_sec_avail = max(0, bottom_sec_bottom - bottom_start)
             by = bottom_start + max(0, (bottom_sec_avail - bottom_h) // 2)
 
@@ -427,9 +557,9 @@ def compose_image(
                 bb = font_bottom.getbbox(t)
                 by += (bb[3] - bb[1]) + line_spacing
     else:
-        # Fallback path (kept for completeness)
-        y = stack_top_y
-        if top_h > 0:
+        # Fallback drawing path (legacy)
+        y = safe_top_y
+        if has_top:
             text_color_top = pick_text_color(bg_color_top)
             stroke_col_top = inverse_color(text_color_top)
             ty = y
@@ -440,13 +570,12 @@ def compose_image(
                           stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
                 bb = font_top.getbbox(t)
                 ty += (bb[3] - bb[1]) + line_spacing
-            y = ty + (gap_top if gap_top else 0)
+            y = ty + gap_top_eff
 
         result.paste(cutout_with_shadow, (product_x, product_y), cutout_with_shadow)
-        y = product_y + cutout_with_shadow.height
+        y = product_y + product_h_total + gap_bottom_eff
 
-        if bottom_h > 0:
-            y += (gap_bottom if gap_bottom else 0)
+        if has_bottom:
             text_color_bottom = pick_text_color(bg_color_bottom)
             stroke_col_bottom = inverse_color(text_color_bottom)
             for line in bottom_lines:
