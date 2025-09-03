@@ -42,7 +42,10 @@ SHADOW_ITERATIONS = 8
 SHADOW_ALPHA      = 160  # 0..255
 
 # ---- Text legibility (optional stroke/outline) ----
-TEXT_STROKE_WIDTH = 0  # [CHANGE] set to 1–2 to enable a safety outline around text
+TEXT_STROKE_WIDTH = 0  # set to 1–2 to enable a safety outline around text
+
+# ---- NEW: center top/bottom text inside their sections ----
+CENTER_TEXT_BLOCKS = True  # set False to revert to old behavior
 
 # Platform presets
 PLATFORM_SPECS = {
@@ -51,7 +54,7 @@ PLATFORM_SPECS = {
     "email":     {"size": (1200,  600), "desc": "Email hero 2:1 (1200x600)"}
 }
 
-# [CHANGE] Cache rembg session once (performance)
+# Cache rembg session once (performance)
 RMBG_SESSION = new_session("isnet-general-use")
 
 # === Utility ===
@@ -144,13 +147,13 @@ def compose_image(
     bg_color_bottom,
     top_lines,
     bottom_lines,
-    canvas_size=None,  # [CHANGE] require explicit size; fallback removed
+    canvas_size=None,  # require explicit size
     side_padding_pct=SIDE_PADDING_PCT,
     top_padding_pct=TOP_PADDING_PCT,
     bottom_padding_pct=BOTTOM_PADDING_PCT,
-    prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE
+    prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE,
+    center_text_blocks=CENTER_TEXT_BLOCKS,  # NEW param
 ):
-    # [CHANGE] explicit size guard
     if canvas_size is None or len(canvas_size) != 2:
         raise ValueError("compose_image requires an explicit canvas_size=(width, height)")
 
@@ -209,7 +212,7 @@ def compose_image(
 
         avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
 
-        # [CHANGE] Squeeze only existing gaps; never create new ones
+        # Squeeze only existing gaps; never create new ones
         if avail_h_inner < 0:
             need = -avail_h_inner
             squeezable_top = max(0, gap_top - MIN_GAP_PX)
@@ -229,7 +232,7 @@ def compose_image(
         if scale_by_w <= 0 and scale_by_h <= 0:
             continue
 
-        # [CHANGE] Width-first allowed only if product remains prominent enough
+        # Width-first allowed only if product remains prominent enough
         def can_fit_full_width():
             if not (prefer_full_width and scale_by_w > 0):
                 return False
@@ -242,7 +245,6 @@ def compose_image(
         if can_fit_full_width():
             scale = scale_by_w
         else:
-            # otherwise use the limiting dimension
             scale_candidates = []
             if scale_by_w > 0: scale_candidates.append(scale_by_w)
             if scale_by_h > 0: scale_candidates.append(scale_by_h)
@@ -268,7 +270,6 @@ def compose_image(
 
         width_score = min(band_score(top_ratio), band_score(bottom_ratio))
         fs_norm = (fs - 12) / (start_fs - 12 + 1e-6)
-        # [CHANGE] Slightly stronger penalty on under-prominent product
         score = (scale * 1.0) + (fs_norm * 0.25) + (width_score * 0.15) - (prominence_penalty * 1.0)
 
         if (best is None) or (score > best[0]):
@@ -280,7 +281,7 @@ def compose_image(
     else:
         _, fs = best
 
-    # [CHANGE] Final safety: shrink-to-fit if any line exceeds width
+    # Final safety: shrink-to-fit if any line exceeds width
     while fs > 12:
         f_top = load_font(int(fs * TOP_FONT_MULT))
         f_bot = load_font(int(fs * BOTTOM_FONT_MULT))
@@ -293,7 +294,7 @@ def compose_image(
     font_top = load_font(int(fs * TOP_FONT_MULT))
     font_bottom = load_font(int(fs * BOTTOM_FONT_MULT))
 
-    # [CHANGE] Recompute layout with final fs and choose final scale again
+    # Recompute layout with final fs and choose final scale again
     line_spacing = base_line_spacing
     top_h = compute_block_height(top_lines, font_top, line_spacing)
     bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
@@ -345,45 +346,86 @@ def compose_image(
     cutout_resized = cutout.resize((new_w, new_h), Image.LANCZOS)
     cutout_with_shadow = add_shadow(cutout_resized)
 
-    # Vertical centering + optical bias
+    # --- Placement math ---
+    # Total stack height using chosen gaps (for product centering within safe area + optical bias)
     stack_h = top_h + gap_top + cutout_with_shadow.height + gap_bottom + bottom_h
     bias_px = int(safe_h * OPTICAL_BIAS_PCT)
-    y = top_pad + int((safe_h - stack_h) / 2) + bias_px
+    stack_top_y = top_pad + int((safe_h - stack_h) / 2) + bias_px
+
+    # Product position derived from stack top (same as before)
+    product_y = stack_top_y + (top_h + (gap_top if top_h > 0 else 0))
+    product_x = (cw - cutout_with_shadow.width) // 2
 
     draw = ImageDraw.Draw(result)
 
-    # Top text
-    if top_h > 0:
-        text_color_top = pick_text_color(bg_color_top)
-        stroke_col_top = inverse_color(text_color_top)
-        ty = y
-        for line in top_lines:
-            t = line if line else " "
-            tx = int((cw - font_top.getlength(t)) // 2)
-            # [CHANGE] optional stroke for legibility
-            draw.text((tx, ty), t, font=font_top, fill=text_color_top,
-                      stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
-            bb = font_top.getbbox(t)
-            ty += (bb[3] - bb[1]) + line_spacing
-        y = ty + (gap_top if gap_top else 0)
+    # ---- DRAW: Vertically center text blocks in their sections (NEW) ----
+    if center_text_blocks:
+        # TOP SECTION: from top_pad to (product_y - gap_top)
+        if top_h > 0:
+            top_sec_top = top_pad
+            top_sec_bottom = product_y - (gap_top if gap_top else 0)
+            top_sec_avail = max(0, top_sec_bottom - top_sec_top)
+            ty = top_sec_top + max(0, (top_sec_avail - top_h) // 2)
 
-    # Product
-    cutout_x = (cw - cutout_with_shadow.width) // 2
-    result.paste(cutout_with_shadow, (cutout_x, y), cutout_with_shadow)
-    y += cutout_with_shadow.height
+            text_color_top = pick_text_color(bg_color_top)
+            stroke_col_top = inverse_color(text_color_top)
+            for line in top_lines:
+                t = line if line else " "
+                tx = int((cw - font_top.getlength(t)) // 2)
+                draw.text((tx, ty), t, font=font_top, fill=text_color_top,
+                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
+                bb = font_top.getbbox(t)
+                ty += (bb[3] - bb[1]) + line_spacing
 
-    # Bottom text
-    if bottom_h > 0:
-        y += (gap_bottom if gap_bottom else 0)
-        text_color_bottom = pick_text_color(bg_color_bottom)
-        stroke_col_bottom = inverse_color(text_color_bottom)
-        for line in bottom_lines:
-            t = line if line else " "
-            tx = int((cw - font_bottom.getlength(t)) // 2)
-            draw.text((tx, y), t, font=font_bottom, fill=text_color_bottom,
-                      stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_bottom)
-            bb = font_bottom.getbbox(t)
-            y += (bb[3] - bb[1]) + line_spacing
+        # Paste product
+        result.paste(cutout_with_shadow, (product_x, product_y), cutout_with_shadow)
+
+        # BOTTOM SECTION: from (product_bottom + gap_bottom) to (ch - bottom_pad)
+        if bottom_h > 0:
+            bottom_start = product_y + cutout_with_shadow.height + (gap_bottom if gap_bottom else 0)
+            bottom_sec_bottom = ch - bottom_pad
+            bottom_sec_avail = max(0, bottom_sec_bottom - bottom_start)
+            by = bottom_start + max(0, (bottom_sec_avail - bottom_h) // 2)
+
+            text_color_bottom = pick_text_color(bg_color_bottom)
+            stroke_col_bottom = inverse_color(text_color_bottom)
+            for line in bottom_lines:
+                t = line if line else " "
+                tx = int((cw - font_bottom.getlength(t)) // 2)
+                draw.text((tx, by), t, font=font_bottom, fill=text_color_bottom,
+                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_bottom)
+                bb = font_bottom.getbbox(t)
+                by += (bb[3] - bb[1]) + line_spacing
+    else:
+        # ---- OLD DRAW PATH (kept for optional fallback) ----
+        y = stack_top_y
+        if top_h > 0:
+            text_color_top = pick_text_color(bg_color_top)
+            stroke_col_top = inverse_color(text_color_top)
+            ty = y
+            for line in top_lines:
+                t = line if line else " "
+                tx = int((cw - font_top.getlength(t)) // 2)
+                draw.text((tx, ty), t, font=font_top, fill=text_color_top,
+                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
+                bb = font_top.getbbox(t)
+                ty += (bb[3] - bb[1]) + line_spacing
+            y = ty + (gap_top if gap_top else 0)
+
+        result.paste(cutout_with_shadow, (product_x, y), cutout_with_shadow)
+        y += cutout_with_shadow.height
+
+        if bottom_h > 0:
+            y += (gap_bottom if gap_bottom else 0)
+            text_color_bottom = pick_text_color(bg_color_bottom)
+            stroke_col_bottom = inverse_color(text_color_bottom)
+            for line in bottom_lines:
+                t = line if line else " "
+                tx = int((cw - font_bottom.getlength(t)) // 2)
+                draw.text((tx, y), t, font=font_bottom, fill=text_color_bottom,
+                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_bottom)
+                bb = font_bottom.getbbox(t)
+                y += (bb[3] - bb[1]) + line_spacing
 
     return result.convert("RGB")
 
@@ -409,7 +451,6 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, canv
     original_img = Image.open(input_path).convert("RGBA")
     resized_img = resize_if_needed(original_img)
 
-    # [CHANGE] reuse cached rembg session
     output_data = remove(input_data, session=RMBG_SESSION)
 
     cutout = Image.open(io.BytesIO(output_data)).convert("RGBA")
@@ -464,7 +505,8 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, canv
             side_padding_pct=side_padding_pct,
             top_padding_pct=top_padding_pct,
             bottom_padding_pct=bottom_padding_pct,
-            prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE
+            prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE,
+            center_text_blocks=CENTER_TEXT_BLOCKS
         )
         result.show()
         confirm = input("Use this gradient? (y/n): ").strip().lower()
