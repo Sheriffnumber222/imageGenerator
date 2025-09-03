@@ -21,7 +21,7 @@ TEXT_WIDTH_MIN_RATIO = 0.60    # aim for longest line ≥ 60% of available width
 TEXT_WIDTH_MAX_RATIO = 0.90    # and ≤ 90% of available width
 
 # Vertical rhythm
-LINE_SPACING_PCT   = 0.012     # line spacing vs canvas height
+LINE_SPACING_PCT   = 0.024     # line spacing vs canvas height
 GAP_PCT            = 0.02      # base gap between text blocks and product
 MIN_GAP_PX         = 8         # never go below this when auto-shrinking gaps
 OPTICAL_BIAS_PCT   = -0.03     # up/down shift of the whole stack inside the safe band (−0.03 = lift up 3%)
