@@ -72,6 +72,7 @@ PRODUCT_CENTER_RATIO_BOTH = 0.45  # product visual center at ~57% of safe band
 
 # Platform presets
 PLATFORM_SPECS = {
+    "linkedin":  {"size": (1200, 1200), "desc": "LinkedIn square 1:1 (1200x1200)"},
     "facebook":  {"size": (1200, 1500), "desc": "Facebook feed 4:5 (1200x1500)"},
     "instagram": {"size": (1080, 1350), "desc": "Instagram feed 4:5 (1080x1350)"},
     "email":     {"size": (1200,  600), "desc": "Email hero 2:1 (1200x600)"}
