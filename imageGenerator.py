@@ -20,63 +20,74 @@ BOTTOM_PADDING_PCT = 0.08
 TEXT_WIDTH_MIN_RATIO = 0.60    # aim for longest line ≥ 60% of available width
 TEXT_WIDTH_MAX_RATIO = 0.90    # and ≤ 90% of available width
 
-# [NEW] Orphan mitigation (gentle boost when a block’s longest line is very short)
-ORPHAN_MIN_RATIO     = 0.40    # if longest line ≤ 40%, we try to nudge it up a bit
-ORPHAN_TARGET_RATIO  = 0.50    # aim to reach ~50% if possible (without breaking other rules)
-ORPHAN_UPSCALE_STEP  = 1.04    # per-step multiplier when nudging font size up
-ORPHAN_UPSCALE_STEPS = 6       # at most ~25% total boost (1.04^6 ≈ 1.27), but other guards still apply
+# Orphan mitigation (gentle boost when a block’s longest line is very short)
+ORPHAN_MIN_RATIO     = 0.40
+ORPHAN_TARGET_RATIO  = 0.50
+ORPHAN_UPSCALE_STEP  = 1.04
+ORPHAN_UPSCALE_STEPS = 6
 
 # Vertical rhythm
-LINE_SPACING_PCT   = 0.024     # line spacing vs canvas height
-GAP_PCT            = 0.02      # base gap between text blocks and product
-MIN_GAP_PX         = 8         # never go below this when auto-shrinking gaps
+LINE_SPACING_PCT   = 0.024
+GAP_PCT            = 0.02
+MIN_GAP_PX         = 8
 
-# [NEW] Quiet zone (buffer around the product when adjacent to text)
+# Quiet zone (buffer around the product when adjacent to text)
 QUIET_ZONE_FRAC_OF_PRODUCT = 0.065  # 6.5% of product height as min buffer (per side with text)
 
-# [CHANGE] Optical bias is now expressed as explicit product-center anchors
-# Keep this for single-sided layout bias (still useful)
-OPTICAL_BIAS_PCT   = -0.03
-
-# Product size protection
-PRODUCT_MIN_FRAC_OF_SAFE = 0.35   # product should occupy at least this fraction of safe vertical space
+# Product anchor / bias
+OPTICAL_BIAS_PCT   = -0.03  # (kept for compatibility)
+PRODUCT_MIN_FRAC_OF_SAFE = 0.35
 PREFER_FULL_WIDTH_WHEN_POSSIBLE = True
 
-# Optional: make top lines slightly larger than bottom lines (base multipliers)
+# Optional: top vs bottom sizing multipliers
 TOP_FONT_MULT    = 1.00
 BOTTOM_FONT_MULT = 1.00
 
-# ---- Hierarchy enforcement (when both top and bottom exist) ----
-BOTTOM_HIERARCHY_SCALE   = 0.92  # [NEW] bottom font ≈ 90–92% of top
-BOTTOM_MAX_SAFE_FRAC     = 0.25  # [NEW] bottom block ≤ 25% of safe band
+# Hierarchy enforcement (when both top and bottom exist)
+BOTTOM_HIERARCHY_SCALE   = 0.92
+BOTTOM_MAX_SAFE_FRAC     = 0.25
 
-# ---- Shadow controls ----
+# Shadow controls
 SHADOW_OFFSET     = (6, 6)
 SHADOW_BORDER     = 16
 SHADOW_BLUR       = 2
 SHADOW_ITERATIONS = 8
 SHADOW_ALPHA      = 160  # 0..255
 
-# ---- Text legibility (optional stroke/outline) ----
-TEXT_STROKE_WIDTH = 0  # set to 1–2 to enable a safety outline around text
+# Text legibility stroke (0 = off)
+TEXT_STROKE_WIDTH = 0
 
-# ---- Centering behavior ----
-CENTER_TEXT_BLOCKS = True  # center text blocks within their own sections
+# Centering behavior
+CENTER_TEXT_BLOCKS = True
 
-# ---- Single‑sided anchors (0.5 = exact center) ----
-SINGLE_SIDE_ANCHOR_TOP    = 0.62  # only top text → product a bit lower
-SINGLE_SIDE_ANCHOR_BOTTOM = 0.38  # only bottom text → product a bit higher
+# Single‑sided product anchors
+SINGLE_SIDE_ANCHOR_TOP    = 0.62
+SINGLE_SIDE_ANCHOR_BOTTOM = 0.38
 
-# ---- [NEW] Both‑sides product anchor (optical center) ----
-PRODUCT_CENTER_RATIO_BOTH = 0.45  # product visual center at ~57% of safe band
+# Both‑sides product anchor (optical center)
+PRODUCT_CENTER_RATIO_BOTH = 0.45
 
-# Platform presets
+# ---- Platform presets ----
+# Keys are used in filenames.
 PLATFORM_SPECS = {
-    "linkedin":  {"size": (1200, 1200), "desc": "LinkedIn square 1:1 (1200x1200)"},
-    "facebook":  {"size": (1200, 1500), "desc": "Facebook feed 4:5 (1200x1500)"},
-    "instagram": {"size": (1080, 1350), "desc": "Instagram feed 4:5 (1080x1350)"},
-    "email":     {"size": (1200,  600), "desc": "Email hero 2:1 (1200x600)"}
+    "facebook":   {"size": (1200, 1500), "desc": "Facebook Feed 4:5 (1200x1500)"},
+    "linkedin":   {"size": (1200, 1200), "desc": "LinkedIn Square 1:1 (1200x1200)"},
+    "instagram":  {"size": (1080, 1350), "desc": "Instagram Feed 4:5 (1080x1350)"},
+    "email":      {"size": (1200,  600), "desc": "Email Hero 2:1 (1200x600)"},
+    "fb_link":    {"size": (1200,  628), "desc": "Facebook Link Share 1.91:1 (1200x628)"},
+    "ig_story":   {"size": (1080, 1920), "desc": "IG Stories/Reels 9:16 (1080x1920)"},
 }
+
+# Ordered menu (for numeric selection)
+PLATFORM_MENU = [
+    ("facebook",  PLATFORM_SPECS["facebook"]["desc"]),
+    ("linkedin",  PLATFORM_SPECS["linkedin"]["desc"]),
+    ("instagram", PLATFORM_SPECS["instagram"]["desc"]),
+    ("email",     PLATFORM_SPECS["email"]["desc"]),
+    ("fb_link",   PLATFORM_SPECS["fb_link"]["desc"]),
+    ("ig_story",  PLATFORM_SPECS["ig_story"]["desc"]),
+]
+PREVIEW_KEY_FOR_ALL = "facebook"  # preview gradient one time using this canvas when generating ALL
 
 # Cache rembg session once (performance)
 RMBG_SESSION = new_session("isnet-general-use")
@@ -171,7 +182,7 @@ def compose_image(
     bg_color_bottom,
     top_lines,
     bottom_lines,
-    canvas_size=None,  # require explicit size
+    canvas_size=None,
     side_padding_pct=SIDE_PADDING_PCT,
     top_padding_pct=TOP_PADDING_PCT,
     bottom_padding_pct=BOTTOM_PADDING_PCT,
@@ -197,7 +208,7 @@ def compose_image(
     safe_h = ch - top_pad - bottom_pad
     max_text_width = cw - 2*side_pad
 
-    # Shadow overhead (constant for a given cutout size/params)
+    # Shadow overhead probe
     _probe = Image.new('RGBA', (1, 1), (255, 255, 255, 255))
     _probe_s = add_shadow(_probe)
     shadow_extra_w = _probe_s.width - 1
@@ -207,7 +218,6 @@ def compose_image(
     has_bottom = bool(bottom_lines)
     both_blocks = has_top and has_bottom
 
-    # --- Search for the best base font size (fs controls overall scale) ---
     start_fs = max(int(cw * 0.11), 24)
     best = None  # (score, fs, eff_bottom_fs)
 
@@ -219,11 +229,8 @@ def compose_image(
         return 0 if max_text_width <= 0 else (longest / max_text_width)
 
     for fs in range(start_fs, 11, -2):
-        # Top font at fs
         top_fs = int(fs * TOP_FONT_MULT)
         font_top = load_font(top_fs)
-
-        # Bottom hierarchy: smaller when both blocks exist
         bottom_rel = BOTTOM_HIERARCHY_SCALE if both_blocks else 1.0
         bottom_fs = max(10, int(fs * BOTTOM_FONT_MULT * bottom_rel))
         font_bottom = load_font(bottom_fs)
@@ -232,7 +239,7 @@ def compose_image(
         top_h = compute_block_height(top_lines, font_top, line_spacing)
         bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-        # [NEW] Enforce bottom height cap when both blocks exist
+        # Enforce bottom height cap
         if both_blocks and bottom_h > int(BOTTOM_MAX_SAFE_FRAC * safe_h):
             cap_px = int(BOTTOM_MAX_SAFE_FRAC * safe_h)
             while bottom_h > cap_px and bottom_fs > 10:
@@ -240,31 +247,26 @@ def compose_image(
                 font_bottom = load_font(bottom_fs)
                 bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-        # Width ratios after bottom cap adjustment
         top_ratio = longest_ratio(top_lines, font_top)
         bottom_ratio = longest_ratio(bottom_lines, font_bottom)
 
-        # Hard reject if anything exceeds max width
+        # Hard reject if width overflow
         if top_ratio > TEXT_WIDTH_MAX_RATIO + 0.02 or bottom_ratio > TEXT_WIDTH_MAX_RATIO + 0.02:
             continue
 
-        # Base gaps if the block exists
         gap_top = base_gap if has_top else 0
         gap_bottom = base_gap if has_bottom else 0
 
         target_w = cw - 2*side_pad
         w_limit_inner = max(1, target_w - shadow_extra_w)
 
-        # First-pass available height (without quiet zones)
         avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
 
-        # Candidate scales without quiet zones
         scale_by_w = w_limit_inner / cutout.width
         scale_by_h = avail_h_inner / cutout.height if cutout.height > 0 else 0
         if scale_by_w <= 0 and scale_by_h <= 0:
             continue
 
-        # Width-first allowed only if product remains prominent enough
         def can_fit_full_width(g_top, g_bottom):
             if not (prefer_full_width and scale_by_w > 0):
                 return False
@@ -274,7 +276,6 @@ def compose_image(
             frac = product_total_h / max(1, safe_h)
             return frac >= PRODUCT_MIN_FRAC_OF_SAFE
 
-        # Initial scale choice (without quiet zones)
         if can_fit_full_width(gap_top, gap_bottom):
             scale = scale_by_w
         else:
@@ -288,7 +289,6 @@ def compose_image(
         if not np.isfinite(scale) or scale <= 0:
             continue
 
-        # [NEW] Quiet zones depend on product height → refine gaps and scale
         product_total_h = cutout.height * scale + shadow_extra_h
         quiet_top = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_top else 0
         quiet_bottom = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_bottom else 0
@@ -312,7 +312,6 @@ def compose_image(
         if not np.isfinite(scale) or scale <= 0:
             continue
 
-        # Final product metrics for scoring
         product_total_h = cutout.height * scale + shadow_extra_h
         product_frac = product_total_h / max(1, safe_h)
         prominence_penalty = max(0.0, PRODUCT_MIN_FRAC_OF_SAFE - product_frac)
@@ -329,36 +328,30 @@ def compose_image(
         width_score = min(band_score(top_ratio), band_score(bottom_ratio))
         fs_norm = (fs - 12) / (start_fs - 12 + 1e-6)
 
-        # Heavier penalty if width << target (protects against tiny orphan lines)
         small_width_penalty = 0.0
         if (has_top and top_ratio <= ORPHAN_MIN_RATIO) or (has_bottom and bottom_ratio <= ORPHAN_MIN_RATIO):
-            small_width_penalty = 0.1  # mild; we'll also do a micro-upscale later
+            small_width_penalty = 0.1
 
         score = (scale * 1.0) + (fs_norm * 0.25) + (width_score * 0.15) - (prominence_penalty * 1.0) - small_width_penalty
 
         if (best is None) or (score > best[0]):
             best = (score, fs, bottom_fs)
 
-    # Fallback if no size worked at all
     if best is None:
         fs = 12
         bottom_fs = max(10, int(fs * BOTTOM_FONT_MULT * (BOTTOM_HIERARCHY_SCALE if both_blocks else 1.0)))
     else:
         _, fs, bottom_fs = best
 
-    # --- Final sizing + safety passes ---
-    # Base fonts
+    # Final sizing
     top_fs = int(fs * TOP_FONT_MULT)
     font_top = load_font(top_fs)
-
     font_bottom = load_font(bottom_fs)
 
-    # Final line spacing and block heights
     line_spacing = base_line_spacing
     top_h = compute_block_height(top_lines, font_top, line_spacing)
     bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-    # Enforce bottom cap again at the very end (more accurate with final fs)
     if both_blocks and bottom_h > int(BOTTOM_MAX_SAFE_FRAC * safe_h):
         cap_px = int(BOTTOM_MAX_SAFE_FRAC * safe_h)
         while bottom_h > cap_px and bottom_fs > 10:
@@ -366,9 +359,8 @@ def compose_image(
             font_bottom = load_font(bottom_fs)
             bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-    # Width safety: shrink to avoid overflow
     def block_too_wide(lines, font_obj):
-        return any(font_obj.getlength(ln or " ") > max_text_width for ln in lines)
+        return any(font_obj.getlength(ln or " ") > (cw - 2*side_pad) for ln in lines)
 
     while top_fs > 12 and block_too_wide(top_lines, font_top):
         top_fs -= 1
@@ -380,22 +372,24 @@ def compose_image(
         font_bottom = load_font(bottom_fs)
         bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
-    # [NEW] Orphan mitigation: gentle upscaling per block (without breaking constraints)
     def longest_ratio_with(font_obj, lines):
         if not lines:
             return 0.0
         widths = [font_obj.getlength(ln if ln else " ") for ln in lines]
         longest = max(widths) if widths else 0
+        max_text_width = cw - 2*side_pad
         return longest / max_text_width if max_text_width > 0 else 0
 
-    # We will re-evaluate scale after this pass; only slight changes allowed.
+    has_top = bool(top_lines)
+    has_bottom = bool(bottom_lines)
+    both_blocks = has_top and has_bottom
+
     if has_top:
         tries = 0
         while tries < ORPHAN_UPSCALE_STEPS:
             tr = longest_ratio_with(font_top, top_lines)
             if tr > ORPHAN_MIN_RATIO and tr >= ORPHAN_TARGET_RATIO:
                 break
-            # Try a tiny increase but never allow overflow beyond TEXT_WIDTH_MAX_RATIO
             cand_fs = int(round(top_fs * ORPHAN_UPSCALE_STEP))
             cand_font = load_font(cand_fs)
             if longest_ratio_with(cand_font, top_lines) > (TEXT_WIDTH_MAX_RATIO + 0.01):
@@ -413,7 +407,6 @@ def compose_image(
                 break
             cand_fs = int(round(bottom_fs * ORPHAN_UPSCALE_STEP))
             cand_font = load_font(cand_fs)
-            # Keep bottom smaller than top when both blocks exist
             if both_blocks and cand_fs > int(top_fs * BOTTOM_HIERARCHY_SCALE):
                 break
             if longest_ratio_with(cand_font, bottom_lines) > (TEXT_WIDTH_MAX_RATIO + 0.01):
@@ -421,19 +414,16 @@ def compose_image(
             bottom_fs = cand_fs
             font_bottom = cand_font
             bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
-            # Re-enforce 25% safe cap
             if both_blocks and bottom_h > int(BOTTOM_MAX_SAFE_FRAC * safe_h):
                 break
             tries += 1
 
-    # Final gaps (base + quiet zones later)
     gap_top = base_gap if has_top else 0
     gap_bottom = base_gap if has_bottom else 0
 
     target_w = cw - 2*side_pad
     w_limit_inner = max(1, target_w - shadow_extra_w)
 
-    # First-pass scale
     avail_h_inner = safe_h - (top_h + gap_top + bottom_h + gap_bottom) - shadow_extra_h
     scale_by_w = w_limit_inner / cutout.width
     scale_by_h = avail_h_inner / cutout.height if cutout.height > 0 else 0
@@ -458,7 +448,6 @@ def compose_image(
     if not np.isfinite(scale) or scale <= 0:
         scale = 0.5
 
-    # Add quiet zones (refine gaps and scale once more)
     product_total_h = cutout.height * scale + shadow_extra_h
     quiet_top = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_top else 0
     quiet_bottom = int(QUIET_ZONE_FRAC_OF_PRODUCT * product_total_h) if has_bottom else 0
@@ -479,22 +468,18 @@ def compose_image(
     if not np.isfinite(scale) or scale <= 0:
         scale = 0.5
 
-    # Resize + shadow
     new_w = max(1, int(cutout.width * scale))
     new_h = max(1, int(cutout.height * scale))
     cutout_resized = cutout.resize((new_w, new_h), Image.LANCZOS)
     cutout_with_shadow = add_shadow(cutout_resized)
 
-    # --- Product position (anchors) ---
     product_h_total = cutout_with_shadow.height
     safe_top_y = top_pad
     safe_bottom_y = ch - bottom_pad
 
     if both_blocks:
-        # [NEW] Optical vertical bias via anchor
         centerY = safe_top_y + int(safe_h * PRODUCT_CENTER_RATIO_BOTH)
         product_y = int(centerY - product_h_total / 2)
-        # Ensure room for text + quiet gaps
         min_y = safe_top_y + top_h + gap_top_eff
         max_y = safe_bottom_y - (bottom_h + gap_bottom_eff) - product_h_total
         product_y = max(min_y, min(product_y, max_y))
@@ -511,17 +496,13 @@ def compose_image(
         max_y = safe_bottom_y - (bottom_h + gap_bottom_eff) - product_h_total
         product_y = max(min_y, min(product_y, max_y))
     else:
-        # No text → simple center
         centerY = safe_top_y + int(safe_h * 0.5)
         product_y = int(centerY - product_h_total / 2)
 
     product_x = (cw - cutout_with_shadow.width) // 2
-
     draw = ImageDraw.Draw(result)
 
-    # ---- DRAW: Vertically center text blocks in their sections (respect quiet gaps) ----
-    if center_text_blocks:
-        # TOP SECTION
+    if CENTER_TEXT_BLOCKS:
         if has_top:
             top_sec_top = safe_top_y
             top_sec_bottom = product_y - gap_top_eff
@@ -538,10 +519,8 @@ def compose_image(
                 bb = font_top.getbbox(t)
                 ty += (bb[3] - bb[1]) + line_spacing
 
-        # Product
         result.paste(cutout_with_shadow, (product_x, product_y), cutout_with_shadow)
 
-        # BOTTOM SECTION
         if has_bottom:
             bottom_start = product_y + product_h_total + gap_bottom_eff
             bottom_sec_bottom = safe_bottom_y
@@ -558,7 +537,6 @@ def compose_image(
                 bb = font_bottom.getbbox(t)
                 by += (bb[3] - bb[1]) + line_spacing
     else:
-        # Fallback drawing path (legacy)
         y = safe_top_y
         if has_top:
             text_color_top = pick_text_color(bg_color_top)
@@ -589,7 +567,7 @@ def compose_image(
 
     return result.convert("RGB")
 
-# === Parse text (/// switches top→bottom; // line breaks) ===
+# === Text parsing (/// switches top→bottom; // line breaks) ===
 def parse_text_blocks(text_input):
     if not text_input:
         return [], []
@@ -600,22 +578,20 @@ def parse_text_blocks(text_input):
     bottom_lines = [s.strip() for s in bottom_raw.split("//")] if bottom_raw != "" else []
     return top_lines, bottom_lines
 
-# === Background Removal + Gradient ===
-def remove_background_and_add_gradient(input_path, output_path, text_input, canvas_size,
-                                       side_padding_pct=SIDE_PADDING_PCT,
-                                       top_padding_pct=TOP_PADDING_PCT,
-                                       bottom_padding_pct=BOTTOM_PADDING_PCT):
+# === I/O helpers for a single background removal pass ===
+def load_and_remove_bg(input_path):
     with open(input_path, 'rb') as f:
         input_data = f.read()
-
     original_img = Image.open(input_path).convert("RGBA")
     resized_img = resize_if_needed(original_img)
-
+    # Background removal (one time)
     output_data = remove(input_data, session=RMBG_SESSION)
-
     cutout = Image.open(io.BytesIO(output_data)).convert("RGBA")
     cutout = resize_if_needed(cutout)
+    return resized_img, cutout
 
+# === Gradient selection with preview ===
+def select_gradient_with_preview(resized_img, cutout, text_input, preview_canvas_size):
     top_lines, bottom_lines = parse_text_blocks(text_input)
 
     gradient_options = {
@@ -636,8 +612,7 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, canv
         print("5 = Brand to Brand Purple (#E7B95F → #4D217A)")
         print("6 = Brand Gold to Charcoal (#E7B95F → #1A1A1A)")
         print("custom = Enter your own two hex colors")
-        print("Leave blank to auto-detect from image background")
-
+        print("Leave blank to auto-detect from image background (edge average)")
         choice = input("Your choice (1–6, custom, or blank): ").strip()
 
         if choice.lower() == "custom":
@@ -658,24 +633,64 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, canv
             bg_top = get_dominant_edge_color(resized_img)
             bg_bot = tuple(max(0, c - 40) for c in bg_top)
 
-        # Compose & preview
-        result = compose_image(
+        # Preview once on the provided canvas
+        preview_img = compose_image(
             cutout, bg_top, bg_bot, top_lines, bottom_lines,
-            canvas_size=canvas_size,
-            side_padding_pct=side_padding_pct,
-            top_padding_pct=top_padding_pct,
-            bottom_padding_pct=bottom_padding_pct,
+            canvas_size=preview_canvas_size,
+            side_padding_pct=SIDE_PADDING_PCT,
+            top_padding_pct=TOP_PADDING_PCT,
+            bottom_padding_pct=BOTTOM_PADDING_PCT,
             prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE,
             center_text_blocks=CENTER_TEXT_BLOCKS,
             single_side_anchor_top=SINGLE_SIDE_ANCHOR_TOP,
             single_side_anchor_bottom=SINGLE_SIDE_ANCHOR_BOTTOM,
         )
-        result.show()
+        preview_img.show()
         confirm = input("Use this gradient? (y/n): ").strip().lower()
         if confirm == 'y':
-            result.save(output_path, format="JPEG", quality=95)
-            print(f"✅ Saved: {output_path}")
-            break
+            return bg_top, bg_bot
+
+# === One-shot renderer (no gradient selection here) ===
+def render_and_save(cutout, resized_img, text_input, canvas_size, output_path, bg_colors):
+    top_lines, bottom_lines = parse_text_blocks(text_input)
+    bg_top, bg_bot = bg_colors
+    result = compose_image(
+        cutout, bg_top, bg_bot, top_lines, bottom_lines,
+        canvas_size=canvas_size,
+        side_padding_pct=SIDE_PADDING_PCT,
+        top_padding_pct=TOP_PADDING_PCT,
+        bottom_padding_pct=BOTTOM_PADDING_PCT,
+        prefer_full_width=PREFER_FULL_WIDTH_WHEN_POSSIBLE,
+        center_text_blocks=CENTER_TEXT_BLOCKS,
+        single_side_anchor_top=SINGLE_SIDE_ANCHOR_TOP,
+        single_side_anchor_bottom=SINGLE_SIDE_ANCHOR_BOTTOM,
+    )
+    result.save(output_path, format="JPEG", quality=95)
+    print(f"✅ Saved: {output_path}")
+
+# === Backwards-compatible helper (kept, now supports optional colors & preview control) ===
+def remove_background_and_add_gradient(input_path, output_path, text_input, canvas_size,
+                                       side_padding_pct=SIDE_PADDING_PCT,
+                                       top_padding_pct=TOP_PADDING_PCT,
+                                       bottom_padding_pct=BOTTOM_PADDING_PCT,
+                                       cutout=None, resized_img=None,
+                                       bg_colors=None, preview=True, preview_canvas_size=None):
+    if resized_img is None or cutout is None:
+        resized_img, cutout = load_and_remove_bg(input_path)
+
+    if bg_colors is None:
+        if preview:
+            if preview_canvas_size is None:
+                preview_canvas_size = canvas_size
+            bg_colors = select_gradient_with_preview(resized_img, cutout, text_input, preview_canvas_size)
+        else:
+            # Auto-detect quietly (no preview)
+            top_col = get_dominant_edge_color(resized_img)
+            bot_col = tuple(max(0, c - 40) for c in top_col)
+            bg_colors = (top_col, bot_col)
+
+    render_and_save(cutout, resized_img, text_input, canvas_size, output_path, bg_colors)
+    return bg_colors, cutout, resized_img
 
 # === Main ===
 def main():
@@ -686,27 +701,66 @@ def main():
     input_path = os.path.join(input_folder, latest)
     base = os.path.splitext(latest)[0]
 
-    print("\nSelect platform output:")
-    for key, spec in PLATFORM_SPECS.items():
-        print(f"- {key}: {spec['desc']}")
-    platform_choice = input("Enter platform (facebook / instagram / email): ").strip().lower()
-    if platform_choice not in PLATFORM_SPECS:
-        print("Invalid platform. Defaulting to 'instagram'.")
-        platform_choice = "instagram"
-    canvas_size = PLATFORM_SPECS[platform_choice]["size"]
-
+    # Ask for text first (used for preview & all outputs)
     user_text = input("Enter text (use // for line breaks; use /// to move text below): ").strip()
 
+    # Numeric platform picker
+    print("\nSelect platform output:")
+    for idx, (key, desc) in enumerate(PLATFORM_MENU, start=1):
+        print(f"{idx}. {desc}  [{key}]")
+    print(f"{len(PLATFORM_MENU)+1}. Generate ALL (preview gradient once on {PLATFORM_SPECS[PREVIEW_KEY_FOR_ALL]['size'][0]}x{PLATFORM_SPECS[PREVIEW_KEY_FOR_ALL]['size'][1]})")
+
+    raw_choice = input(f"Enter your choice (1-{len(PLATFORM_MENU)+1}) or a key name: ").strip().lower()
+
+    # Map numeric to key
+    key_choice = None
+    if raw_choice.isdigit():
+        val = int(raw_choice)
+        if 1 <= val <= len(PLATFORM_MENU):
+            key_choice = PLATFORM_MENU[val-1][0]
+        elif val == len(PLATFORM_MENU) + 1:
+            key_choice = "ALL"
+    else:
+        # also allow typing a key like "facebook" or "all"
+        if raw_choice in PLATFORM_SPECS:
+            key_choice = raw_choice
+        elif raw_choice in ("all", "everything"):
+            key_choice = "ALL"
+
+    if key_choice is None:
+        print("Invalid selection. Defaulting to 'instagram' feed.")
+        key_choice = "instagram"
+
+    # Precompute background removal once (also used for single)
+    resized_img, cutout = load_and_remove_bg(input_path)
+
+    if key_choice == "ALL":
+        # Preview gradient ONCE using the Facebook 1200x1500 canvas
+        preview_canvas = PLATFORM_SPECS[PREVIEW_KEY_FOR_ALL]["size"]
+        bg_top, bg_bot = select_gradient_with_preview(resized_img, cutout, user_text, preview_canvas)
+        chosen_colors = (bg_top, bg_bot)
+
+        # Render all sizes (in menu order)
+        for key, _desc in PLATFORM_MENU:
+            canvas_size = PLATFORM_SPECS[key]["size"]
+            w, h = canvas_size
+            output_name = f"{base}_{key}_{w}x{h}.jpg"
+            output_path = os.path.join(finished_folder, output_name)
+            render_and_save(cutout, resized_img, user_text, canvas_size, output_path, chosen_colors)
+
+        print("🎉 Done generating all variants.")
+        return
+
+    # Single platform path: allow per-platform preview & selection
+    canvas_size = PLATFORM_SPECS[key_choice]["size"]
     w, h = canvas_size
-    output_name = f"{base}_{platform_choice}_{w}x{h}.jpg"
+    output_name = f"{base}_{key_choice}_{w}x{h}.jpg"
     output_path = os.path.join(finished_folder, output_name)
 
-    remove_background_and_add_gradient(
-        input_path, output_path, user_text, canvas_size,
-        side_padding_pct=SIDE_PADDING_PCT,
-        top_padding_pct=TOP_PADDING_PCT,
-        bottom_padding_pct=BOTTOM_PADDING_PCT
-    )
+    # Let the user pick/preview gradient on this specific canvas
+    chosen_colors = select_gradient_with_preview(resized_img, cutout, user_text, canvas_size)
+    render_and_save(cutout, resized_img, user_text, canvas_size, output_path, chosen_colors)
+    print("✅ Finished.")
 
 if __name__ == "__main__":
     main()
