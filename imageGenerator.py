@@ -4,6 +4,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
 from rembg import remove, new_session
 
+# New deps for emoji handling
+import regex as re
+import emoji as emoji_lib
+
 # === Configuration ===
 base_folder = r"C:\Users\LocalAdmin\Desktop\automation\imageGeneratorAssets"
 input_folder = base_folder
@@ -60,15 +64,32 @@ TEXT_STROKE_WIDTH = 0
 # Centering behavior
 CENTER_TEXT_BLOCKS = True
 
-# Single‑sided product anchors
+# Single-sided product anchors
 SINGLE_SIDE_ANCHOR_TOP    = 0.62
-SINGLE_SIDE_ANCHOR_BOTTOM = 0.38
+SINGLE_SIDE_ANCHOR_BOTTOM = 0.38  # base anchor (we also add a small bias below)
 
-# Both‑sides product anchor (optical center)
+# Both-sides product anchor (optical center)
 PRODUCT_CENTER_RATIO_BOTH = 0.45
 
+# --- New: layout tuning when ONLY bottom text exists ---
+# Push product slightly *down* when only bottom text is present (so it doesn't look high)
+BOTTOM_ONLY_PRODUCT_BIAS_PCT = 0.04  # 4% of canvas height (tweak 0.02–0.06 to taste)
+
+# ---- Text color overrides (set to None to auto-pick for contrast) ----
+TEXT_COLOR_TOP_OVERRIDE = "#E7B95F"     # e.g., "#FFFFFF" or "white"
+TEXT_COLOR_BOTTOM_OVERRIDE = "#E7B95F"  # <— set brand gold for bottom text
+
+# ---- Emoji & Font options ----
+# "font"    => render emoji from font (depends on OS font support/colors)
+# "twemoji" => render classic color emoji from image sprites (recommended)
+EMOJI_MODE = "twemoji"
+# Point this to your Twemoji 72x72 PNG folder (filenames like "1f525.png")
+EMOJI_ASSET_DIR = r"C:\Users\LocalAdmin\Desktop\automation\imageGeneratorAssets\_Emoji Assets\twemoji-master\twemoji-master\assets\72x72"
+
+# Optional: force a specific font file for all text (top & bottom)
+FONT_PATH_OVERRIDE = None  # e.g., r"C:\Windows\Fonts\segoeui.ttf"
+
 # ---- Platform presets ----
-# Keys are used in filenames.
 PLATFORM_SPECS = {
     "facebook":   {"size": (1200, 1500), "desc": "Facebook Feed 4:5 (1200x1500)"},
     "linkedin":   {"size": (1200, 1200), "desc": "LinkedIn Square 1:1 (1200x1200)"},
@@ -77,8 +98,6 @@ PLATFORM_SPECS = {
     "fb_link":    {"size": (1200,  628), "desc": "Facebook Link Share 1.91:1 (1200x628)"},
     "ig_story":   {"size": (1080, 1920), "desc": "IG Stories/Reels 9:16 (1080x1920)"},
 }
-
-# Ordered menu (for numeric selection)
 PLATFORM_MENU = [
     ("facebook",  PLATFORM_SPECS["facebook"]["desc"]),
     ("linkedin",  PLATFORM_SPECS["linkedin"]["desc"]),
@@ -87,7 +106,7 @@ PLATFORM_MENU = [
     ("fb_link",   PLATFORM_SPECS["fb_link"]["desc"]),
     ("ig_story",  PLATFORM_SPECS["ig_story"]["desc"]),
 ]
-PREVIEW_KEY_FOR_ALL = "facebook"  # preview gradient one time using this canvas when generating ALL
+PREVIEW_KEY_FOR_ALL = "facebook"
 
 # Cache rembg session once (performance)
 RMBG_SESSION = new_session("isnet-general-use")
@@ -157,23 +176,101 @@ def add_shadow(image,
     shadow_image.paste(image, image_pos, image)
     return shadow_image
 
+# === Emoji & Font helpers ===
 def load_font(size):
-    try:
-        return ImageFont.truetype("arialbd.ttf", size)
-    except Exception:
+    """Respect FONT_PATH_OVERRIDE; otherwise try a list of good defaults."""
+    if FONT_PATH_OVERRIDE:
         try:
-            return ImageFont.truetype(r"C:\Windows\Fonts\arialbd.ttf", size)
+            return ImageFont.truetype(FONT_PATH_OVERRIDE, size)
         except Exception:
-            return ImageFont.load_default()
+            pass
+    candidates = [
+        r"C:\Windows\Fonts\seguiemj.ttf",  # Segoe UI Emoji
+        r"C:\Windows\Fonts\segoeui.ttf",   # Segoe UI
+        r"C:\Windows\Fonts\arialbd.ttf",   # Arial Bold
+        "arialbd.ttf",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+# Grapheme cluster splitter (handles ZWJ emoji sequences)
+_EMOJI_CLUSTER_RE = re.compile(r"\X", re.UNICODE)
+
+def _is_emoji_cluster(cluster: str) -> bool:
+    # True if emoji lib finds an emoji matching this exact cluster
+    return any(item["emoji"] == cluster for item in emoji_lib.emoji_list(cluster))
+
+def _twemoji_filename_for_cluster(cluster: str) -> str:
+    # Twemoji filenames are hyphen-joined lowercase hex codepoints (include ZWJ/FE0F)
+    return "-".join(f"{ord(ch):x}" for ch in cluster) + ".png"
+
+def _line_height(font: ImageFont.FreeTypeFont) -> int:
+    bb = font.getbbox("Mg")
+    return (bb[3] - bb[1]) if bb else max(font.size, 1)
+
+def _measure_rich_text_width(text: str, font: ImageFont.FreeTypeFont) -> int:
+    lh = _line_height(font)
+    width = 0
+    for cluster in _EMOJI_CLUSTER_RE.findall(text):
+        if EMOJI_MODE.lower() == "twemoji" and _is_emoji_cluster(cluster):
+            width += lh  # emoji box equals line height
+        else:
+            width += int(font.getlength(cluster if cluster else " "))
+    return width
+
+def _draw_rich_line(
+    draw: ImageDraw.ImageDraw,
+    base_img: Image.Image,
+    x: int,
+    y: int,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    fill,
+    stroke_width: int,
+    stroke_fill,
+):
+    lh = _line_height(font)
+    cursor_x = x
+    for cluster in _EMOJI_CLUSTER_RE.findall(text):
+        if EMOJI_MODE.lower() == "twemoji" and _is_emoji_cluster(cluster):
+            try:
+                fn = _twemoji_filename_for_cluster(cluster)
+                fp = os.path.join(EMOJI_ASSET_DIR, fn)
+                if not os.path.isfile(fp):
+                    no_vs = "-".join(p for p in fn[:-4].split("-") if p != "fe0f") + ".png"
+                    fp2 = os.path.join(EMOJI_ASSET_DIR, no_vs)
+                    fp = fp2 if os.path.isfile(fp2) else fp
+                em = Image.open(fp).convert("RGBA")
+                if (em.width, em.height) != (lh, lh):
+                    em = em.resize((lh, lh), Image.LANCZOS)
+                paste_y = y + (lh - lh) // 2
+                base_img.paste(em, (cursor_x, paste_y), em)
+                cursor_x += lh
+                continue
+            except Exception:
+                pass
+        draw.text((cursor_x, y), cluster if cluster else " ", font=font,
+                  fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
+        cursor_x += int(font.getlength(cluster if cluster else " "))
 
 def compute_block_height(lines, font, line_spacing):
     if not lines:
         return 0
-    total = 0
-    for line in lines:
-        bbox = font.getbbox(line if line else "Ag")
-        total += (bbox[3] - bbox[1]) + line_spacing
-    return total - line_spacing
+    lh = _line_height(font)
+    return max(0, len(lines) * lh + (len(lines) - 1) * line_spacing)
+
+# === Text color override helper ===
+def resolve_text_color(auto_rgb, override):
+    if override is None or str(override).strip() == "":
+        return auto_rgb
+    try:
+        return ImageColor.getrgb(str(override).strip())
+    except Exception:
+        return auto_rgb
 
 # === Smart Compose ===
 def compose_image(
@@ -224,7 +321,7 @@ def compose_image(
     def longest_ratio(lines, font_obj):
         if not lines:
             return 0.0
-        widths = [font_obj.getlength(ln if ln else " ") for ln in lines]
+        widths = [_measure_rich_text_width(ln if ln else " ", font_obj) for ln in lines]
         longest = max(widths) if widths else 0
         return 0 if max_text_width <= 0 else (longest / max_text_width)
 
@@ -276,7 +373,7 @@ def compose_image(
             frac = product_total_h / max(1, safe_h)
             return frac >= PRODUCT_MIN_FRAC_OF_SAFE
 
-        if can_fit_full_width(gap_top, gap_bottom):
+        if can_fit_full_width(gap_top, g_bottom=gap_bottom):
             scale = scale_by_w
         else:
             cands = []
@@ -360,7 +457,7 @@ def compose_image(
             bottom_h = compute_block_height(bottom_lines, font_bottom, line_spacing)
 
     def block_too_wide(lines, font_obj):
-        return any(font_obj.getlength(ln or " ") > (cw - 2*side_pad) for ln in lines)
+        return any(_measure_rich_text_width(ln or " ", font_obj) > max_text_width for ln in lines)
 
     while top_fs > 12 and block_too_wide(top_lines, font_top):
         top_fs -= 1
@@ -375,9 +472,8 @@ def compose_image(
     def longest_ratio_with(font_obj, lines):
         if not lines:
             return 0.0
-        widths = [font_obj.getlength(ln if ln else " ") for ln in lines]
+        widths = [_measure_rich_text_width(ln if ln else " ", font_obj) for ln in lines]
         longest = max(widths) if widths else 0
-        max_text_width = cw - 2*side_pad
         return longest / max_text_width if max_text_width > 0 else 0
 
     has_top = bool(top_lines)
@@ -494,6 +590,8 @@ def compose_image(
         product_y = int(centerY - product_h_total / 2)
         min_y = safe_top_y
         max_y = safe_bottom_y - (bottom_h + gap_bottom_eff) - product_h_total
+        # --- New: push product slightly DOWN when only bottom text exists ---
+        product_y = int(product_y + ch * BOTTOM_ONLY_PRODUCT_BIAS_PCT)
         product_y = max(min_y, min(product_y, max_y))
     else:
         centerY = safe_top_y + int(safe_h * 0.5)
@@ -502,6 +600,7 @@ def compose_image(
     product_x = (cw - cutout_with_shadow.width) // 2
     draw = ImageDraw.Draw(result)
 
+    # ---- DRAWING (rich text with emoji images) ----
     if CENTER_TEXT_BLOCKS:
         if has_top:
             top_sec_top = safe_top_y
@@ -509,15 +608,14 @@ def compose_image(
             top_sec_avail = max(0, top_sec_bottom - top_sec_top)
             ty = top_sec_top + max(0, (top_sec_avail - top_h) // 2)
 
-            text_color_top = pick_text_color(bg_color_top)
+            text_color_top = resolve_text_color(pick_text_color(bg_color_top), TEXT_COLOR_TOP_OVERRIDE)
             stroke_col_top = inverse_color(text_color_top)
             for line in top_lines:
                 t = line if line else " "
-                tx = int((cw - font_top.getlength(t)) // 2)
-                draw.text((tx, ty), t, font=font_top, fill=text_color_top,
-                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
-                bb = font_top.getbbox(t)
-                ty += (bb[3] - bb[1]) + line_spacing
+                tw = _measure_rich_text_width(t, font_top)
+                tx = int((cw - tw) // 2)
+                _draw_rich_line(draw, result, tx, ty, t, font_top, text_color_top, TEXT_STROKE_WIDTH, stroke_col_top)
+                ty += _line_height(font_top) + base_line_spacing
 
         result.paste(cutout_with_shadow, (product_x, product_y), cutout_with_shadow)
 
@@ -527,43 +625,40 @@ def compose_image(
             bottom_sec_avail = max(0, bottom_sec_bottom - bottom_start)
             by = bottom_start + max(0, (bottom_sec_avail - bottom_h) // 2)
 
-            text_color_bottom = pick_text_color(bg_color_bottom)
+            text_color_bottom = resolve_text_color(pick_text_color(bg_color_bottom), TEXT_COLOR_BOTTOM_OVERRIDE)
             stroke_col_bottom = inverse_color(text_color_bottom)
             for line in bottom_lines:
                 t = line if line else " "
-                tx = int((cw - font_bottom.getlength(t)) // 2)
-                draw.text((tx, by), t, font=font_bottom, fill=text_color_bottom,
-                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_bottom)
-                bb = font_bottom.getbbox(t)
-                by += (bb[3] - bb[1]) + line_spacing
+                tw = _measure_rich_text_width(t, font_bottom)
+                tx = int((cw - tw) // 2)
+                _draw_rich_line(draw, result, tx, by, t, font_bottom, text_color_bottom, TEXT_STROKE_WIDTH, stroke_col_bottom)
+                by += _line_height(font_bottom) + base_line_spacing
     else:
         y = safe_top_y
         if has_top:
-            text_color_top = pick_text_color(bg_color_top)
+            text_color_top = resolve_text_color(pick_text_color(bg_color_top), TEXT_COLOR_TOP_OVERRIDE)
             stroke_col_top = inverse_color(text_color_top)
             ty = y
             for line in top_lines:
                 t = line if line else " "
-                tx = int((cw - font_top.getlength(t)) // 2)
-                draw.text((tx, ty), t, font=font_top, fill=text_color_top,
-                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_top)
-                bb = font_top.getbbox(t)
-                ty += (bb[3] - bb[1]) + line_spacing
+                tw = _measure_rich_text_width(t, font_top)
+                tx = int((cw - tw) // 2)
+                _draw_rich_line(draw, result, tx, ty, t, font_top, text_color_top, TEXT_STROKE_WIDTH, stroke_col_top)
+                ty += _line_height(font_top) + base_line_spacing
             y = ty + gap_top_eff
 
         result.paste(cutout_with_shadow, (product_x, product_y), cutout_with_shadow)
         y = product_y + product_h_total + gap_bottom_eff
 
         if has_bottom:
-            text_color_bottom = pick_text_color(bg_color_bottom)
+            text_color_bottom = resolve_text_color(pick_text_color(bg_color_bottom), TEXT_COLOR_BOTTOM_OVERRIDE)
             stroke_col_bottom = inverse_color(text_color_bottom)
             for line in bottom_lines:
                 t = line if line else " "
-                tx = int((cw - font_bottom.getlength(t)) // 2)
-                draw.text((tx, y), t, font=font_bottom, fill=text_color_bottom,
-                          stroke_width=TEXT_STROKE_WIDTH, stroke_fill=stroke_col_bottom)
-                bb = font_bottom.getbbox(t)
-                y += (bb[3] - bb[1]) + line_spacing
+                tw = _measure_rich_text_width(t, font_bottom)
+                tx = int((cw - tw) // 2)
+                _draw_rich_line(draw, result, tx, y, t, font_bottom, text_color_bottom, TEXT_STROKE_WIDTH, stroke_col_bottom)
+                y += _line_height(font_bottom) + base_line_spacing
 
     return result.convert("RGB")
 
@@ -633,7 +728,6 @@ def select_gradient_with_preview(resized_img, cutout, text_input, preview_canvas
             bg_top = get_dominant_edge_color(resized_img)
             bg_bot = tuple(max(0, c - 40) for c in bg_top)
 
-        # Preview once on the provided canvas
         preview_img = compose_image(
             cutout, bg_top, bg_bot, top_lines, bottom_lines,
             canvas_size=preview_canvas_size,
@@ -668,7 +762,7 @@ def render_and_save(cutout, resized_img, text_input, canvas_size, output_path, b
     result.save(output_path, format="JPEG", quality=95)
     print(f"✅ Saved: {output_path}")
 
-# === Backwards-compatible helper (kept, now supports optional colors & preview control) ===
+# === Backwards-compatible helper ===
 def remove_background_and_add_gradient(input_path, output_path, text_input, canvas_size,
                                        side_padding_pct=SIDE_PADDING_PCT,
                                        top_padding_pct=TOP_PADDING_PCT,
@@ -684,7 +778,6 @@ def remove_background_and_add_gradient(input_path, output_path, text_input, canv
                 preview_canvas_size = canvas_size
             bg_colors = select_gradient_with_preview(resized_img, cutout, text_input, preview_canvas_size)
         else:
-            # Auto-detect quietly (no preview)
             top_col = get_dominant_edge_color(resized_img)
             bot_col = tuple(max(0, c - 40) for c in top_col)
             bg_colors = (top_col, bot_col)
@@ -701,10 +794,8 @@ def main():
     input_path = os.path.join(input_folder, latest)
     base = os.path.splitext(latest)[0]
 
-    # Ask for text first (used for preview & all outputs)
     user_text = input("Enter text (use // for line breaks; use /// to move text below): ").strip()
 
-    # Numeric platform picker
     print("\nSelect platform output:")
     for idx, (key, desc) in enumerate(PLATFORM_MENU, start=1):
         print(f"{idx}. {desc}  [{key}]")
@@ -712,7 +803,6 @@ def main():
 
     raw_choice = input(f"Enter your choice (1-{len(PLATFORM_MENU)+1}) or a key name: ").strip().lower()
 
-    # Map numeric to key
     key_choice = None
     if raw_choice.isdigit():
         val = int(raw_choice)
@@ -721,7 +811,6 @@ def main():
         elif val == len(PLATFORM_MENU) + 1:
             key_choice = "ALL"
     else:
-        # also allow typing a key like "facebook" or "all"
         if raw_choice in PLATFORM_SPECS:
             key_choice = raw_choice
         elif raw_choice in ("all", "everything"):
@@ -731,16 +820,13 @@ def main():
         print("Invalid selection. Defaulting to 'instagram' feed.")
         key_choice = "instagram"
 
-    # Precompute background removal once (also used for single)
     resized_img, cutout = load_and_remove_bg(input_path)
 
     if key_choice == "ALL":
-        # Preview gradient ONCE using the Facebook 1200x1500 canvas
         preview_canvas = PLATFORM_SPECS[PREVIEW_KEY_FOR_ALL]["size"]
         bg_top, bg_bot = select_gradient_with_preview(resized_img, cutout, user_text, preview_canvas)
         chosen_colors = (bg_top, bg_bot)
 
-        # Render all sizes (in menu order)
         for key, _desc in PLATFORM_MENU:
             canvas_size = PLATFORM_SPECS[key]["size"]
             w, h = canvas_size
@@ -751,13 +837,11 @@ def main():
         print("🎉 Done generating all variants.")
         return
 
-    # Single platform path: allow per-platform preview & selection
     canvas_size = PLATFORM_SPECS[key_choice]["size"]
     w, h = canvas_size
     output_name = f"{base}_{key_choice}_{w}x{h}.jpg"
     output_path = os.path.join(finished_folder, output_name)
 
-    # Let the user pick/preview gradient on this specific canvas
     chosen_colors = select_gradient_with_preview(resized_img, cutout, user_text, canvas_size)
     render_and_save(cutout, resized_img, user_text, canvas_size, output_path, chosen_colors)
     print("✅ Finished.")
