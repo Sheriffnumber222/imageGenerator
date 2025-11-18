@@ -9,7 +9,7 @@ import regex as re
 import emoji as emoji_lib
 
 # === Configuration ===
-base_folder = r"C:\Users\LocalAdmin\Desktop\automation\imageGeneratorAssets"
+base_folder = r"C:\Users\Brett\Desktop\Automations\imageGeneratorAssets"
 input_folder = base_folder
 finished_folder = os.path.join(base_folder, "Finished")
 os.makedirs(finished_folder, exist_ok=True)
@@ -84,7 +84,7 @@ TEXT_COLOR_BOTTOM_OVERRIDE = "#E7B95F"  # <— set brand gold for bottom text
 # "twemoji" => render classic color emoji from image sprites (recommended)
 EMOJI_MODE = "twemoji"
 # Point this to your Twemoji 72x72 PNG folder (filenames like "1f525.png")
-EMOJI_ASSET_DIR = r"C:\Users\LocalAdmin\Desktop\automation\imageGeneratorAssets\_Emoji Assets\twemoji-master\twemoji-master\assets\72x72"
+EMOJI_ASSET_DIR = r"C:\Users\Brett\Desktop\Automations\imageGeneratorAssets\_Emoji Assets\twemoji-master\twemoji-master\assets\72x72"
 
 # Optional: force a specific font file for all text (top & bottom)
 FONT_PATH_OVERRIDE = None  # e.g., r"C:\Windows\Fonts\segoeui.ttf"
